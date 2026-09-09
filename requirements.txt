@@ -1,2 +1,4 @@
 # Each package here is named and justified in the step's report/commit before it lands.
 pandas==3.0.5  # step-01: CSV loading, dtype inspection, value_counts, null-rate and dedup checks
+pyarrow==25.0.1  # step-02: parquet read/write engine for pandas (no pure-stdlib way to write parquet)
+numpy==2.5.3  # step-02: seeded RNG (default_rng) for the stratified split, vectorized text-concat

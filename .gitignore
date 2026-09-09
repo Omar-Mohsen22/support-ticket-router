@@ -22,6 +22,7 @@ ENV/
 data/*
 !data/raw/
 !data/processed/
+!data/README.md
 data/raw/*
 !data/raw/.gitkeep
 data/processed/*
