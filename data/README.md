@@ -76,10 +76,24 @@ Only `data/raw/aa_dataset-tickets-multi-lang-5-2-50-version.csv` (28587 rows) is
 | Problem | 2721 | 340 | 336 |
 | Request | 3735 | 454 | 476 |
 
+## Known limitations
+
+The split is stratified on `queue` only, so `priority` and `type` proportions are preserved only approximately, not exactly. For example, `type = Change` has 1,705 rows total and lands 1,360 / 190 / 155 across train/val/test instead of an exact 1,364 / 170 / 170 -- roughly a 10% relative deviation for that class.
+
+This was accepted rather than fixed: re-splitting to satisfy three targets (queue, priority, and type) at once would either break the queue stratification this split is built around, or require multi-label stratification, and the deviation is small enough that it should not change conclusions drawn from evaluation. So that a reader can judge that for themselves, per-class support (row count) will be reported next to every metric in the evaluation output, not just the metric value alone.
+
 ## Reproduce
 
+Activate the virtual environment, then run the script with a platform-neutral `python`:
+
 ```
-.venv\Scripts\python.exe src\ticket_router\make_dataset.py
+# Windows (PowerShell / cmd)
+.venv\Scripts\activate
+python src/ticket_router/make_dataset.py
+
+# Unix (macOS / Linux)
+source .venv/bin/activate
+python src/ticket_router/make_dataset.py
 ```
 
 Requires `data/raw/aa_dataset-tickets-multi-lang-5-2-50-version.csv` to already be present (downloaded by `src/ticket_router/inspect_data.py`). Deterministic given a fixed source file and `SPLIT_SEED = 42`.

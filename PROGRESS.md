@@ -168,4 +168,29 @@ data/processed/label_map.json
 **Files changed:** `.gitignore` (added the exception), `data/processed/label_map.json` (now
 tracked).
 
+### Correction (post step-02): fix `data/README.md` wording (docs-only, no re-split)
+
+Two hand-edits to `data/README.md`, without re-running `make_dataset.py` (no data touched, no
+split regenerated):
+
+1. Added a **"Known limitations"** section: the split is stratified on `queue` only, so `priority`
+   and `type` proportions are preserved only approximately. Concrete example given: `type = Change`
+   has 1,705 rows and lands 1,360/190/155 across train/val/test instead of an exact 1,364/170/170
+   (~10% relative deviation for that class). States this was accepted, not fixed — satisfying all
+   three targets at once would either break the queue stratification or need multi-label
+   stratification, and the deviation is too small to change conclusions — and that per-class
+   support will be reported next to every metric so a reader can judge for themselves.
+2. **Reproduce** section was Windows-only (`.venv\Scripts\python.exe ...`). Replaced with a
+   platform-neutral `python src/ticket_router/make_dataset.py` plus venv-activation lines for both
+   Windows and Unix, since the repo is public and will be reviewed on Linux/macOS too.
+
+**Known drift this leaves behind (flagged, not fixed here):** `data/README.md` is normally
+*generated* by `build_data_readme()` inside `src/ticket_router/make_dataset.py`, which was
+deliberately **not** touched this round (docs-only scope, no re-split). That generator still
+produces the old Windows-only Reproduce text and has no Known-limitations section, so the next
+time `make_dataset.py` actually runs, it will silently overwrite `data/README.md` and undo both
+of these corrections. Worth fixing the generator itself next time the script is touched.
+
+**Files changed:** `data/README.md` only.
+
 **Next step:** step-03 — not started yet (to be defined).
