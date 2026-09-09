@@ -2,3 +2,5 @@
 pandas==3.0.5  # step-01: CSV loading, dtype inspection, value_counts, null-rate and dedup checks
 pyarrow==25.0.1  # step-02: parquet read/write engine for pandas (no pure-stdlib way to write parquet)
 numpy==2.5.3  # step-02: seeded RNG (default_rng) for the stratified split, vectorized text-concat
+pydantic==2.13.5  # step-03: TicketLabels schema -- validates a prediction's queue/priority/type against label_map.json's exact allowed values
+pytest==9.1.1  # step-03: test runner for tests/test_metrics.py

@@ -1,0 +1,146 @@
+{
+  "random-baseline": {
+    "run_name": "random-baseline",
+    "split": "test",
+    "predictions_file": "results/random-baseline.predictions.jsonl",
+    "n_gold": 1633,
+    "n_valid": 1633,
+    "invalid_rate": 0.0,
+    "exact_match_rate": 0.02204531537048377,
+    "fields": {
+      "queue": {
+        "accuracy": 0.17819963257807717,
+        "macro_f1": 0.11101923794714066,
+        "per_class": {
+          "Billing and Payments": {
+            "support": 159,
+            "precision": 0.11627906976744186,
+            "recall": 0.12578616352201258,
+            "f1": 0.12084592145015104
+          },
+          "Customer Service": {
+            "support": 241,
+            "precision": 0.15350877192982457,
+            "recall": 0.14522821576763487,
+            "f1": 0.1492537313432836
+          },
+          "General Inquiry": {
+            "support": 24,
+            "precision": 0.07692307692307693,
+            "recall": 0.08333333333333333,
+            "f1": 0.08
+          },
+          "Human Resources": {
+            "support": 35,
+            "precision": 0.05555555555555555,
+            "recall": 0.05714285714285714,
+            "f1": 0.056338028169014086
+          },
+          "IT Support": {
+            "support": 194,
+            "precision": 0.16091954022988506,
+            "recall": 0.14432989690721648,
+            "f1": 0.15217391304347827
+          },
+          "Product Support": {
+            "support": 307,
+            "precision": 0.1873015873015873,
+            "recall": 0.19218241042345277,
+            "f1": 0.1897106109324759
+          },
+          "Returns and Exchanges": {
+            "support": 82,
+            "precision": 0.011764705882352941,
+            "recall": 0.012195121951219513,
+            "f1": 0.011976047904191616
+          },
+          "Sales and Pre-Sales": {
+            "support": 51,
+            "precision": 0.038461538461538464,
+            "recall": 0.0392156862745098,
+            "f1": 0.03883495145631068
+          },
+          "Service Outages and Maintenance": {
+            "support": 66,
+            "precision": 0.015151515151515152,
+            "recall": 0.015151515151515152,
+            "f1": 0.015151515151515152
+          },
+          "Technical Support": {
+            "support": 474,
+            "precision": 0.29436325678496866,
+            "recall": 0.2974683544303797,
+            "f1": 0.29590766002098634
+          }
+        },
+        "n": 1633
+      },
+      "priority": {
+        "accuracy": 0.3655848132271892,
+        "macro_f1": 0.34266464942992375,
+        "per_class": {
+          "high": {
+            "support": 656,
+            "precision": 0.40793650793650793,
+            "recall": 0.39176829268292684,
+            "f1": 0.3996889580093313
+          },
+          "low": {
+            "support": 345,
+            "precision": 0.22522522522522523,
+            "recall": 0.21739130434782608,
+            "f1": 0.22123893805309736
+          },
+          "medium": {
+            "support": 632,
+            "precision": 0.39552238805970147,
+            "recall": 0.41930379746835444,
+            "f1": 0.4070660522273426
+          }
+        },
+        "n": 1633
+      },
+      "type": {
+        "accuracy": 0.3080220453153705,
+        "macro_f1": 0.2576982541156123,
+        "per_class": {
+          "Change": {
+            "support": 155,
+            "precision": 0.1032258064516129,
+            "recall": 0.1032258064516129,
+            "f1": 0.1032258064516129
+          },
+          "Incident": {
+            "support": 666,
+            "precision": 0.41566265060240964,
+            "recall": 0.4144144144144144,
+            "f1": 0.41503759398496237
+          },
+          "Problem": {
+            "support": 336,
+            "precision": 0.24233128834355827,
+            "recall": 0.23511904761904762,
+            "f1": 0.23867069486404832
+          },
+          "Request": {
+            "support": 476,
+            "precision": 0.27049180327868855,
+            "recall": 0.2773109243697479,
+            "f1": 0.27385892116182575
+          }
+        },
+        "n": 1633
+      }
+    },
+    "latency_ms": {
+      "p50": 0.0,
+      "p95": 0.0,
+      "n": 1633
+    },
+    "cost": {
+      "total_usd": 0.0,
+      "per_1000_usd": 0.0,
+      "n_with_cost": 1633
+    }
+  }
+}
