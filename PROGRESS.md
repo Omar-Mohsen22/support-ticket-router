@@ -145,4 +145,27 @@ drift from the actual output).
 Re-running is deterministic (fixed seed 42, fixed source file) and regenerates all outputs from
 scratch.
 
+### Correction (post step-02): track `label_map.json` in git
+
+`data/processed/label_map.json` was originally left gitignored alongside the parquet splits, on
+the assumption that everything under `data/processed/` is regenerable and therefore not worth
+tracking. That assumption was wrong: `label_map.json` is the **label contract** — `schema.py`, the
+evaluation harness, and the step-13 CI tests all depend on its exact contents, and CI does not
+rebuild the dataset (so it can't regenerate the file to get it). The parquet splits genuinely are
+just regenerable data and stay gitignored.
+
+**Fix:** added `!data/processed/label_map.json` to `.gitignore` (alongside the existing
+`!data/processed/.gitkeep` exception), then staged and committed the file.
+
+**Verified tracked:**
+```
+$ git ls-files data/processed/
+data/processed/.gitkeep
+data/processed/label_map.json
+```
+(`train.parquet`, `val.parquet`, `test.parquet` correctly do **not** appear — still gitignored.)
+
+**Files changed:** `.gitignore` (added the exception), `data/processed/label_map.json` (now
+tracked).
+
 **Next step:** step-03 — not started yet (to be defined).
