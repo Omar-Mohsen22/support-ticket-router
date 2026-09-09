@@ -105,6 +105,44 @@ def stratified_split(df: pd.DataFrame, stratify_col: str, ratios: dict, seed: in
     return split_indices
 
 
+def find_least_balanced_class(splits: dict, fields: list[str], ratios: dict) -> dict:
+    """Find the (field, value) pair whose actual per-split counts deviate most,
+    in relative terms, from an exactly-proportional split.
+
+    `fields` should exclude the field the split is actually stratified on
+    (here: `queue`) -- this is about how unevenly *other* target fields land
+    across train/val/test as a side effect of stratifying on `queue` alone.
+
+    Returns a dict: field, value, total, actual (split -> count),
+    ideal (split -> rounded proportional count, for display), and
+    max_rel_dev (largest |actual - ideal_exact| / ideal_exact across splits).
+    """
+    names = list(ratios.keys())
+    worst = None
+    for field in fields:
+        values = sorted(set().union(*(set(part[field].dropna().unique()) for part in splits.values())))
+        for value in values:
+            actual = {name: int((part[field] == value).sum()) for name, part in splits.items()}
+            total = sum(actual.values())
+            if total == 0:
+                continue
+            ideal_exact = {name: total * ratios[name] for name in names}
+            ideal = {name: int(round(ideal_exact[name])) for name in names}
+            rel_devs = [abs(actual[name] - ideal_exact[name]) / ideal_exact[name]
+                        for name in names if ideal_exact[name] > 0]
+            max_rel_dev = max(rel_devs) if rel_devs else 0.0
+            if worst is None or max_rel_dev > worst["max_rel_dev"]:
+                worst = {"field": field, "value": value, "total": total,
+                         "actual": actual, "ideal": ideal, "max_rel_dev": max_rel_dev}
+    return worst
+
+
+def round_to_nearest_10_pct(fraction: float) -> int:
+    """Round a fraction (e.g. 0.1144) to the nearest 10 percentage points, for
+    a coarse, human-readable 'roughly N%' phrase rather than false precision."""
+    return int(round(fraction * 100 / 10.0)) * 10
+
+
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -340,8 +378,44 @@ def build_data_readme(*, n_raw, n_english, queue_counts_en, n_body_missing, n_ta
         lines.append(md_table(header, rows))
         lines.append("")
 
+    worst = find_least_balanced_class(splits, ["priority", "type"], SPLIT_RATIOS)
+    split_names = list(SPLIT_RATIOS.keys())
+    actual_str = " / ".join(f"{worst['actual'][n]:,}" for n in split_names)
+    ideal_str = " / ".join(f"{worst['ideal'][n]:,}" for n in split_names)
+    rough_pct = round_to_nearest_10_pct(worst["max_rel_dev"])
+
+    lines.append("## Known limitations\n")
+    lines.append(
+        "The split is stratified on `queue` only, so `priority` and `type` proportions are "
+        "preserved only approximately, not exactly. For example, "
+        f"`{worst['field']} = {worst['value']}` has {worst['total']:,} rows total and lands "
+        f"{actual_str} across train/val/test instead of an exact {ideal_str} -- roughly a "
+        f"{rough_pct}% relative deviation for that class.\n"
+    )
+    lines.append(
+        "This was accepted rather than fixed: re-splitting to satisfy three targets (queue, "
+        "priority, and type) at once would either break the queue stratification this split is "
+        "built around, or require multi-label stratification, and the deviation is small enough "
+        "that it should not change conclusions drawn from evaluation. So that a reader can judge "
+        "that for themselves, per-class support (row count) will be reported next to every metric "
+        "in the evaluation output, not just the metric value alone.\n"
+    )
+
     lines.append("## Reproduce\n")
-    lines.append("```\n.venv\\Scripts\\python.exe src\\ticket_router\\make_dataset.py\n```\n")
+    lines.append(
+        "Activate the virtual environment, then run the script with a platform-neutral `python`:\n"
+    )
+    lines.append(
+        "```\n"
+        "# Windows (PowerShell / cmd)\n"
+        ".venv\\Scripts\\activate\n"
+        "python src/ticket_router/make_dataset.py\n"
+        "\n"
+        "# Unix (macOS / Linux)\n"
+        "source .venv/bin/activate\n"
+        "python src/ticket_router/make_dataset.py\n"
+        "```\n"
+    )
     lines.append(
         f"Requires `data/raw/aa_dataset-tickets-multi-lang-5-2-50-version.csv` to already be present "
         "(downloaded by `src/ticket_router/inspect_data.py`). Deterministic given a fixed source "

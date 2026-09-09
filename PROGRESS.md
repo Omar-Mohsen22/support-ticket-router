@@ -193,4 +193,48 @@ of these corrections. Worth fixing the generator itself next time the script is 
 
 **Files changed:** `data/README.md` only.
 
+### Correction (post step-02): close the drift — generator now produces both sections
+
+The drift flagged above is fixed. `build_data_readme()` in `src/ticket_router/make_dataset.py` now
+generates both corrections itself, so a real re-run can no longer erase them:
+
+- **`find_least_balanced_class(splits, fields, ratios)`** (new helper): for each value of each
+  field in `fields` — called with `["priority", "type"]`, deliberately excluding `queue`, the field
+  the split is actually stratified on — compares actual per-split counts to an exactly-proportional
+  split and returns the single `(field, value)` with the largest relative deviation on any split.
+  This replaces the previously hand-typed `type = Change` / `1360/190/155` prose: the "Known
+  limitations" section now names whichever class is actually least balanced and prints its real
+  numbers, so the text can't silently go stale if the data or split logic ever changes.
+- **`round_to_nearest_10_pct(fraction)`** (new helper): turns the computed deviation into the same
+  coarse "roughly N%" phrasing the section already used, instead of false precision.
+- **Reproduce section**: generator now emits the cross-platform block (Windows `.venv\Scripts\activate`
+  + Unix `source .venv/bin/activate`, both followed by `python src/ticket_router/make_dataset.py`)
+  instead of the old Windows-only one-liner.
+
+**Re-ran** `.venv\Scripts\python.exe src\ticket_router\make_dataset.py` (fixed seed 42, same source
+file — fully deterministic). Same numbers as the original step-02 run: 16,338 English rows, 0 rows
+dropped, 0 duplicate `text` rows, splits 13,070/1,635/1,633.
+
+**Proof the generator now matches what's committed:**
+```
+$ git status --short
+ M src/ticket_router/make_dataset.py
+
+$ git diff data/README.md
+(empty)
+
+$ git diff data/processed/label_map.json
+(empty)
+```
+`data/README.md` came back byte-identical to the committed version on the first try — the computed
+"least-balanced class" naturally resolved to `type = Change` (1,705 rows; 1,360/190/155 actual vs.
+1,364/170/170 ideal, ~11.4% max relative deviation on val, which `round_to_nearest_10_pct` renders
+as "roughly a 10%"), matching the previously hand-written numbers because the underlying split
+itself didn't change — only how the text describing it is produced. `label_map.json` is untouched,
+confirming the re-run is fully deterministic.
+
+**Files changed:** `src/ticket_router/make_dataset.py` only (`data/README.md` and
+`data/processed/label_map.json` regenerated identical to what was already committed/tracked, so
+neither shows a diff).
+
 **Next step:** step-03 — not started yet (to be defined).
