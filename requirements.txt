@@ -1,2 +1,2 @@
-# No dependencies yet. Each package added here must be named and justified
-# in the step's report before it lands in this file.
+# Each package here is named and justified in the step's report/commit before it lands.
+pandas==3.0.5  # step-01: CSV loading, dtype inspection, value_counts, null-rate and dedup checks
