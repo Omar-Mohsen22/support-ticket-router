@@ -9,9 +9,18 @@ For each ticket, asks the model for strict JSON matching TicketLabels
 prompt, using OpenAI's structured-output mode (response_format: json_schema,
 strict=True). If a given model/request rejects that parameter, falls back to
 plain prompt-based JSON and validates the result with schema.TicketLabels.
-Up to 2 retries (3 attempts total) on invalid/unparseable content -- failures
-beyond that are logged, not retried forever. Rate-limit/transient-error
-backoff is handled by the SDK's own built-in retry logic (`max_retries=`).
+Up to 2 retries (3 attempts total) on invalid/unparseable CONTENT -- failures
+beyond that are logged, not retried forever.
+
+Rate limits (429) are a SEPARATE concern from content retries (see
+call_with_cache): they get their own dedicated backoff loop
+(RATE_LIMIT_MAX_RETRIES, on top of the SDK's own internal backoff) and never
+consume one of a ticket's 3 content-validation attempts. CONCURRENCY_LIMIT is
+set low enough (see its definition) that, combined with that backoff, no row
+should ever be left without a prediction because of a rate limit -- and every
+prior error response cached to disk gets purged at the start of each real run
+(purge_error_cache_entries()) so a stale failure is retried, never silently
+replayed as if it were final.
 
 Every individual API call is cached to disk, keyed by a hash of
 (model, exact messages sent, ticket id), so re-running over the same rows
@@ -44,10 +53,12 @@ from pathlib import Path
 # Make `ticket_router` importable when this file is run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import random
+
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
-from openai import OpenAI, APIStatusError, BadRequestError
+from openai import OpenAI, APIStatusError, BadRequestError, RateLimitError
 from pydantic import ValidationError
 from sklearn.feature_extraction.text import CountVectorizer
 
@@ -59,15 +70,35 @@ RESULTS_DIR = REPO_ROOT / "results"
 LABEL_MAP_PATH = PROCESSED_DIR / "label_map.json"
 ENV_PATH = REPO_ROOT / ".env"
 CACHE_DIR = REPO_ROOT / ".cache" / "api_predictor"
-FEW_SHOT_EXAMPLES_PATH = RESULTS_DIR / "few_shot_examples.json"
 PRIORITY_DEFINITIONS_PATH = RESULTS_DIR / "priority_definitions.json"
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 TARGET_FIELDS = ["queue", "priority", "type"]
 
-CONCURRENCY_LIMIT = 5
+# Lowered from 5 (step-04/05's original value) to eliminate 429s, not just
+# reduce them -- see the "Rate limits, made deterministic" note below.
+# Variant B (the longest prompt) averaged ~963 total tokens/request at
+# ~1.37s/request; at concurrency=5 that's ~5/1.37*963*60 =~ 211,000
+# tokens/minute against a 200,000 TPM account limit -- over budget, which is
+# exactly what produced the observed 429s. At concurrency=3 the same math
+# gives ~127,000 tokens/minute, comfortably under budget with margin for
+# variance. Applied to every variant uniformly for one simple, verifiable
+# number rather than a per-variant tuned value.
+CONCURRENCY_LIMIT = 3
 MAX_CONTENT_RETRIES = 2   # content-validation retries: up to 3 attempts total per ticket
 SDK_MAX_RETRIES = 5       # the openai SDK's own built-in backoff on 429/5xx/connection errors
+
+# Rate-limit (429) retries are handled SEPARATELY from MAX_CONTENT_RETRIES
+# (see call_with_cache): a transient rate limit is not a content problem, and
+# must never consume one of a ticket's 3 content-validation attempts. This is
+# the outer bound on top of the SDK's own internal backoff -- generous
+# (RATE_LIMIT_MAX_RETRIES attempts, exponential backoff capped at
+# RATE_LIMIT_MAX_DELAY_S) specifically so that, combined with the lowered
+# concurrency above, no row is ever left without a prediction because of a
+# rate limit.
+RATE_LIMIT_MAX_RETRIES = 10
+RATE_LIMIT_BASE_DELAY_S = 2.0
+RATE_LIMIT_MAX_DELAY_S = 60.0
 
 # --- Step-05 few-shot config ---------------------------------------------------
 # Variant A ("coverage"): one few-shot example per queue class, selected
@@ -82,6 +113,13 @@ SDK_MAX_RETRIES = 5       # the openai SDK's own built-in backoff on 429/5xx/con
 # frequency ratio, restricted to words appearing in at least
 # PRIORITY_DEF_MIN_DF training tickets of that value, to avoid noise from rare
 # words). This is a keyness/log-odds-style analysis, not a hand-written guess.
+#
+# Variant C ("coverage-median"): identical to Variant A except the selection
+# rule is the MEDIAN-length training text per queue class, not the shortest.
+# Isolates whether Variant A's result was a property of few-shot prompting or
+# an artifact of "shortest" skewing toward atypical, less-informative
+# examples -- same deterministic tie-break (lowest id on length ties), same
+# 10-classes-of-1 structure, only the length-selection rule differs.
 PRIORITY_DEF_TOP_N = 12
 PRIORITY_DEF_MIN_DF = 20
 
@@ -115,16 +153,30 @@ def build_ticket_schema_dict() -> dict:
     return schema
 
 
-def select_few_shot_examples(train: pd.DataFrame) -> list[dict]:
-    """Variant A's 10 few-shot examples: one per queue class, the SHORTEST
-    training `text` in that class (ties broken by lowest `id`), so the
-    prompt stays small. Fully deterministic given the fixed train.parquet."""
+def select_few_shot_examples(train: pd.DataFrame, rule: str = "shortest") -> list[dict]:
+    """10 few-shot examples: one per queue class, chosen by `rule`, ties on
+    text length always broken by lowest `id`. Fully deterministic given the
+    fixed train.parquet.
+
+    rule="shortest" (Variant A): the shortest training `text` in each class
+      -- keeps the prompt small, but may select atypical, less-informative
+      examples.
+    rule="median" (Variant C): the training `text` at the middle position by
+      length within each class (index len(subset)//2 after ascending sort --
+      the upper median for even-sized classes), to remove the "shortest
+      skews atypical" confound while keeping the same one-example-per-class
+      structure.
+    """
+    if rule not in ("shortest", "median"):
+        raise ValueError(f"unknown rule: {rule!r}")
+
     examples = []
     for queue_value in sorted(train["queue"].unique()):
         subset = train[train["queue"] == queue_value].copy()
         subset["_text_len"] = subset["text"].str.len()
-        subset = subset.sort_values(["_text_len", "id"])
-        row = subset.iloc[0]
+        subset = subset.sort_values(["_text_len", "id"]).reset_index(drop=True)
+        idx = 0 if rule == "shortest" else len(subset) // 2
+        row = subset.iloc[idx]
         examples.append({
             "id": row["id"], "text": row["text"],
             "queue": row["queue"], "priority": row["priority"], "type": row["type"],
@@ -219,16 +271,45 @@ def looks_like_unsupported_response_format(error_text: str) -> bool:
     return "response_format" in lowered or "json_schema" in lowered
 
 
+def purge_error_cache_entries() -> int:
+    """Delete every cached response that recorded an "error" -- an error was
+    never a valid answer to begin with, so nothing legitimate is lost, and it
+    stops a stale rate-limit failure from being silently replayed forever as
+    if it were the real result. Cheap (directory scan); run once per real
+    invocation before any ticket is processed. Returns the count purged."""
+    if not CACHE_DIR.exists():
+        return 0
+    n_purged = 0
+    for cache_path in CACHE_DIR.glob("*.json"):
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if isinstance(cached.get("response"), dict) and "error" in cached["response"]:
+            cache_path.unlink()
+            n_purged += 1
+    return n_purged
+
+
 def call_with_cache(client: OpenAI, model: str, messages: list[dict], ticket_id: str,
                      use_structured: bool, schema_dict: dict) -> tuple[dict, float, bool]:
     """Send (or replay from cache) one API call.
 
     Returns (response_dict, elapsed_ms, was_fresh). response_dict is either
     `response.model_dump()`, or {"error": "..."} on failure -- the error
-    itself is still cached, since it's still "a response" for that exact
-    request per the caching instruction, and replaying it on a re-run
-    correctly reconstructs the same retry path without spending anything.
-    was_fresh is False on a cache hit (nothing was sent/spent this run).
+    itself is still cached (see purge_error_cache_entries() for why that's
+    safe), and replaying it on a re-run correctly reconstructs the same retry
+    path without spending anything. was_fresh is False on a cache hit
+    (nothing was sent/spent this run).
+
+    A RateLimitError (429) is retried in its OWN loop here, separate from
+    process_ticket's MAX_CONTENT_RETRIES -- a rate limit is not a content
+    problem, and must never consume one of a ticket's 3 content-validation
+    attempts. Only after RATE_LIMIT_MAX_RETRIES exhausted attempts (on top of
+    the SDK's own internal backoff on every individual call) does this give
+    up and return an error, at which point it's a genuine, reportable
+    failure rather than an artifact of the retry budget being spent on the
+    wrong kind of problem.
     """
     key = cache_key_for(model, messages, ticket_id, use_structured)
     cache_path = CACHE_DIR / f"{key}.json"
@@ -245,13 +326,26 @@ def call_with_cache(client: OpenAI, model: str, messages: list[dict], ticket_id:
         }
 
     t0 = time.perf_counter()
-    try:
-        response = client.chat.completions.create(**kwargs)
-        response_dict = response.model_dump()
-    except BadRequestError as e:
-        response_dict = {"error": f"BadRequestError {e.status_code}: {e.message}"}
-    except APIStatusError as e:
-        response_dict = {"error": f"{type(e).__name__} {e.status_code}: {e.message}"}
+    response_dict = None
+    for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
+        try:
+            response = client.chat.completions.create(**kwargs)
+            response_dict = response.model_dump()
+            break
+        except RateLimitError as e:
+            if rl_attempt < RATE_LIMIT_MAX_RETRIES:
+                delay = min(RATE_LIMIT_MAX_DELAY_S, RATE_LIMIT_BASE_DELAY_S * (2 ** rl_attempt))
+                delay += random.uniform(0, 0.5)
+                time.sleep(delay)
+                continue
+            response_dict = {"error": f"RateLimitError {e.status_code}: {e.message} "
+                                       f"(gave up after {RATE_LIMIT_MAX_RETRIES} dedicated retries)"}
+        except BadRequestError as e:
+            response_dict = {"error": f"BadRequestError {e.status_code}: {e.message}"}
+            break
+        except APIStatusError as e:
+            response_dict = {"error": f"{type(e).__name__} {e.status_code}: {e.message}"}
+            break
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -419,12 +513,14 @@ def main() -> None:
     parser.add_argument("--run-name", help="Required unless --smoke-test")
     parser.add_argument("--output", type=Path, default=None,
                          help="Defaults to results/<run-name>.predictions.jsonl")
-    parser.add_argument("--variant", choices=["zero-shot", "coverage", "coverage-priority"],
+    parser.add_argument("--variant",
+                         choices=["zero-shot", "coverage", "coverage-priority", "coverage-median"],
                          default="zero-shot",
                          help="zero-shot (default, step-04 behavior, unchanged); coverage "
-                              "(step-05 Variant A: 10 few-shot examples, one per queue class); "
+                              "(step-05 Variant A: 10 few-shot examples, shortest-per-class); "
                               "coverage-priority (step-05 Variant B: coverage + data-derived "
-                              "per-priority-value descriptions in the prompt)")
+                              "per-priority-value descriptions); coverage-median (step-05 Variant "
+                              "C: identical to coverage, but median-length-per-class examples)")
     args = parser.parse_args()
 
     if args.smoke_test:
@@ -435,6 +531,11 @@ def main() -> None:
         parser.error("--run-name is required unless --smoke-test")
 
     client, model, _api_key = build_client()
+
+    n_purged = purge_error_cache_entries()
+    if n_purged:
+        print(f"Purged {n_purged} stale error cache entr{'y' if n_purged == 1 else 'ies'} -- "
+              f"those tickets will be freshly retried, not replayed as failures.")
 
     split_path = PROCESSED_DIR / f"{args.split}.parquet"
     if not split_path.exists():
@@ -450,20 +551,22 @@ def main() -> None:
 
     few_shot_examples = None
     priority_definitions = None
-    if args.variant in ("coverage", "coverage-priority"):
+    if args.variant in ("coverage", "coverage-priority", "coverage-median"):
         train_path = PROCESSED_DIR / "train.parquet"
         if not train_path.exists():
             print(f"STOP: {train_path} not found. Run make_dataset.py first.")
             raise SystemExit(1)
         train = pd.read_parquet(train_path)
 
-        few_shot_examples = select_few_shot_examples(train)
+        selection_rule = "median" if args.variant == "coverage-median" else "shortest"
+        few_shot_examples = select_few_shot_examples(train, rule=selection_rule)
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        FEW_SHOT_EXAMPLES_PATH.write_text(
+        few_shot_examples_path = RESULTS_DIR / f"few_shot_examples_{selection_rule}.json"
+        few_shot_examples_path.write_text(
             json.dumps(few_shot_examples, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         print(f"Variant '{args.variant}': {len(few_shot_examples)} few-shot examples "
-              f"(one per queue class, shortest-text rule) -- wrote {FEW_SHOT_EXAMPLES_PATH}")
+              f"(one per queue class, {selection_rule}-text rule) -- wrote {few_shot_examples_path}")
 
         if args.variant == "coverage-priority":
             priority_definitions, top_words = derive_priority_definitions(train)

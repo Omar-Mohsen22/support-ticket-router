@@ -621,4 +621,106 @@ across reruns).
 
 **Stopped after two variants, as instructed** -- no further prompt iteration.
 
+## step-05 (continued): methodology fix + Variant C, then stop
+
+Two things, in the order requested.
+
+### 1. Closed the methodology gap
+
+**Exactly how the 429-failed rows were scored, stated plainly**: not dropped. `evaluate.py` keeps
+every gold row in the denominator (n=1,633 always) and scores an id with no valid prediction as
+wrong on every field via a sentinel that can never match a real label -- so failed rows were always
+counted as incorrect, not excluded. But which specific tickets got a genuine prediction differed
+per run (6 failed in A, 33 in B) -- same row count, different row identities. Confirmed by
+inspecting every failed row's `error` field: **100% `RateLimitError`, 0% content/validation
+failures** in both variants.
+
+**Made it deterministic, in `api_predictor.py`:**
+- `CONCURRENCY_LIMIT`: 5 -> **3**. Token-budget math in the code comment: Variant B averaged ~963
+  tokens/request at ~1.37s/request; concurrency 5 -> ~211,000 tokens/min against a 200,000 TPM
+  limit (over budget, matches the observed 429s); concurrency 3 -> ~127,000 tokens/min (comfortable
+  margin).
+- **Rate-limit retries separated from content-validation retries**: `call_with_cache()` now retries
+  `RateLimitError` in its own loop (up to 10 attempts, exponential backoff capped at 60s) that never
+  consumes one of a ticket's 3 content-validation attempts -- previously a 429 could burn through
+  that budget and permanently fail a ticket.
+- **`purge_error_cache_entries()`** (new, runs automatically at the start of every real invocation):
+  deletes every cached response that recorded an error before processing starts, since an error was
+  never a valid answer and replaying it as if it were final defeats the retry mechanism silently.
+
+**Re-ran only the affected rows** (per instructions: "the cache covers the rest") -- same
+`--run-name`s, so the ~1,600+ already-successful rows per run replayed free from cache; only the
+previously-failed 6 (A) and 33 (B) rows made fresh calls. Both reached **0 failures, invalid_rate
+0.00%** this time.
+
+**Corrected numbers** (before -> after; macro-F1):
+
+| run | queue | priority | type | exact-match | invalid-rate |
+|---|---|---|---|---|---|
+| A: coverage | 0.2442 -> 0.2445 | 0.3135 -> 0.3136 | 0.4319 -> 0.4327 | 6.86% -> 6.86% | 0.37% -> **0.00%** |
+| B: coverage-priority | 0.2241 -> 0.2287 | 0.3224 -> 0.3246 | 0.4710 -> 0.4738 | 6.92% -> 7.04% | 2.02% -> **0.00%** |
+
+Movement is small (failed rows were <2% either way) -- the qualitative story didn't flip -- but every
+run is now scored on the identical 1,633-row set with a genuine prediction for all of them, not an
+approximation.
+
+### 2. Variant C (`coverage-median`) -- removing the selection confound
+
+Identical to Variant A except `select_few_shot_examples()` now takes a `rule` parameter: `"shortest"`
+(Variant A, unchanged) or `"median"` (Variant C -- index `len(subset)//2` after ascending sort by
+`text` length, same lowest-id tie-break). Same deterministic, documented, one-example-per-queue-class
+structure; only the length-selection rule differs. Saved to rule-named files
+(`results/few_shot_examples_shortest.json`, `results/few_shot_examples_median.json` -- the old
+undifferentiated `results/few_shot_examples.json` was removed, identical content confirmed via diff
+before deletion).
+
+Ran on the full 1,633-row test split (fresh -- no prior cache): **0 failures**, thanks to the same
+concurrency/backoff fix.
+
+**Result: the confound was real.** Full comparison and reasoning in `reports/prompting_notes.md`;
+headline numbers:
+
+| run | queue F1 | priority F1 | type F1 | exact-match |
+|---|---|---|---|---|
+| zero-shot | 0.2554 | 0.3214 | 0.5209 | 10.90% |
+| A: coverage (shortest) | 0.2445 | 0.3136 | 0.4327 | 6.86% |
+| B: coverage-priority | 0.2287 | 0.3246 | 0.4738 | 7.04% |
+| **C: coverage-median** | **0.2399** | **0.3330** | **0.6687** | **9.06%** |
+| tfidf-baseline (reference) | 0.3683 | 0.5445 | 0.8412 | 29.33% |
+
+Variant C beats A and B on every field, and beats zero-shot on `priority` (small, real gain) and
+substantially on `type` (0.5209 -> 0.6687, closing **~46% of the gap to TF-IDF** on that field).
+`queue` is still slightly worse than zero-shot regardless of which few-shot rule is used.
+`priority = low` recall moves off a literal 0.0000 (A and B both scored exactly 0 there) to 0.0058
+in Variant C -- still a near-total miss, but example *typicality* moved it where Variant B's
+*explicit stated definitions* did not.
+
+**Final verdict (plainly, per field, with the confound removed and every run on identical rows):**
+few-shot **hurts** `queue` (-6.1% relative), **helps modestly** `priority` (+3.6% relative, gap
+mostly still open), **helps substantially** `type` (+28.4% relative, ~46% of the TF-IDF gap closed).
+**No variant closes the gap to TF-IDF on any field** -- TF-IDF stays ahead everywhere, by a wide
+margin on `queue`/`priority` and a still-substantial one on `type`.
+
+**Files added:** `results/few_shot_examples_median.json`,
+`results/api-gpt4o-mini-fewshot-coverage-median.predictions.jsonl`. **Files removed:**
+`results/few_shot_examples.json` (superseded by rule-named files). **Files changed:**
+`src/ticket_router/predictors/api_predictor.py` (concurrency, rate-limit retry separation, cache
+purge, `coverage-median` variant), `reports/prompting_notes.md` (rewritten with the correction and
+Variant C), `results/api-gpt4o-mini-fewshot-coverage.predictions.jsonl` and
+`-coverage-priority.predictions.jsonl` (6 and 33 rows corrected), `results/results.json`,
+`results/comparison.md`, `README.md` (all three regenerated/resynced).
+
+**No new dependency**: `random` (stdlib) for backoff jitter; everything else already installed.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\predictors\api_predictor.py --split test --variant coverage --run-name api-gpt4o-mini-fewshot-coverage
+.venv\Scripts\python.exe src\ticket_router\predictors\api_predictor.py --split test --variant coverage-priority --run-name api-gpt4o-mini-fewshot-coverage-priority
+.venv\Scripts\python.exe src\ticket_router\predictors\api_predictor.py --split test --variant coverage-median --run-name api-gpt4o-mini-fewshot-coverage-median
+.venv\Scripts\python.exe src\ticket_router\evaluate.py --predictions results\api-gpt4o-mini-fewshot-coverage-median.predictions.jsonl --split test --run-name api-gpt4o-mini-fewshot-coverage-median
+.venv\Scripts\python.exe src\ticket_router\report.py
+```
+
+**Stopped after Variant C, as instructed -- this was the last prompting attempt.**
+
 **Next step:** step-06 — not started yet (to be defined).

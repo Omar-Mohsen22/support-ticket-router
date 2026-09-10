@@ -1,0 +1,72 @@
+[
+  {
+    "id": "tkt_010146",
+    "text": "Inquiry into JIRA Software Billing Features\nSeeking to understand the billing features included in JIRA Software, which is part of a project management SaaS solution. Please provide detailed information on how billing works, including any discounts for annual subscriptions or additional fees for certain features. This information would greatly help in understanding the associated costs of using JIRA Software.",
+    "queue": "Billing and Payments",
+    "priority": "high",
+    "type": "Request"
+  },
+  {
+    "id": "tkt_027287",
+    "text": "Recent Feedback on Delayed Response Times\nIn recent times, users have reported experiencing sluggish response times when accessing various features on the project dashboard, particularly during peak traffic hours. Efforts have been made to pinpoint and address potential bottlenecks in server performance and optimize database queries, but the issues still persist. We are currently working on resolving the issue.",
+    "queue": "Customer Service",
+    "priority": "low",
+    "type": "Incident"
+  },
+  {
+    "id": "tkt_011183",
+    "text": "Discussion on Integrating AutoCAD 2022 SaaS\nSeeking information on integrating AutoCAD 2022 SaaS into our project management system. Could you detail the benefits this integration would offer our team? We currently use AutoCAD for design and SaaS for project management, and we are looking to streamline our workflow by integrating these two systems. Please let us know the steps we need to take to make this happen. We look forward to your response.",
+    "queue": "General Inquiry",
+    "priority": "low",
+    "type": "Request"
+  },
+  {
+    "id": "tkt_013033",
+    "text": "Query Regarding Medical Data Security Incident\nThere was an incident involving potential unauthorized access to our medical data systems. This is likely due to inadequate security protocols and software vulnerabilities. We have updated the software and reviewed access logs, identifying some anomalies. We need your assistance to further investigate and enhance our security measures.",
+    "queue": "Human Resources",
+    "priority": "low",
+    "type": "Incident"
+  },
+  {
+    "id": "tkt_004418",
+    "text": "Assistance Needed for Digital Tools Enhancement\nOur customer support team is seeking help with updating and optimizing our digital tools software. A marketing agency aiming to improve brand growth strategies requires guidance on how to effectively utilize these tools and recommendations for their optimization. Kindly inform us of any additional steps we should take. Thank you for your time and support.",
+    "queue": "IT Support",
+    "priority": "medium",
+    "type": "Change"
+  },
+  {
+    "id": "tkt_023133",
+    "text": "Investigation Needed for Slow Performance of Investment Analytics Tool\nA financial firm is encountering slow performance with its investment analytics tool when processing large datasets. This could be due to improper system configurations or resource limitations. Despite attempts to optimize database queries and reallocate server resources, the issue still persists. We need your help to resolve this matter.",
+    "queue": "Product Support",
+    "priority": "low",
+    "type": "Problem"
+  },
+  {
+    "id": "tkt_003283",
+    "text": "Revise Digital Marketing Plans\nRequesting an update on the digital marketing strategies. Our technology software products need a boost in brand visibility. I would like to discuss new methods to improve our online presence and expand our audience. This includes social media, content marketing, and search engine optimization. I look forward to hearing from you to explore ways to enhance our marketing efforts.",
+    "queue": "Returns and Exchanges",
+    "priority": "low",
+    "type": "Change"
+  },
+  {
+    "id": "tkt_003250",
+    "text": "Support Request for IBM SPSS\nI am reaching out to inquire about the comprehensive product features and integration options available for IBM SPSS Statistics 28, specifically in the context of investment analytics. Could you supply details on the software tools used for analyzing and forecasting investment trends? I would appreciate guidance on how to implement these features for potential applications within the investment analytics domain.",
+    "queue": "Sales and Pre-Sales",
+    "priority": "medium",
+    "type": "Request"
+  },
+  {
+    "id": "tkt_014998",
+    "text": "Investment Optimization Tools Unavailable Following Maintenance\nThe investment optimization tools are currently inaccessible due to a service outage. This unexpected downtime might be a result of recent server maintenance. We have restarted the affected applications and are monitoring server performance, but access continues to be disrupted. Assistance is needed to resolve this issue promptly to minimize any impact on operations.",
+    "queue": "Service Outages and Maintenance",
+    "priority": "high",
+    "type": "Incident"
+  },
+  {
+    "id": "tkt_011073",
+    "text": "Support for Data Processing Issues\nOur data processing analytics platform is encountering delays, possibly because of the increased data volume. Although restarting the service cleared temporary caches, the issue continues to affect reporting and decision-making processes. We would greatly appreciate your assistance in optimizing the platform for better performance. Please inform us of the next steps to resolve this issue.",
+    "queue": "Technical Support",
+    "priority": "low",
+    "type": "Incident"
+  }
+]
