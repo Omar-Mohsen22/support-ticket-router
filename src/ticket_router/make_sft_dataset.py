@@ -33,12 +33,20 @@ this version of the script corrects (a prior version used OPENAI_MODEL/
 tiktoken for the token-length analysis, which does not describe how the
 actual fine-tuning target model tokenizes anything).
 
-Token-length histogram, recommended max_seq_len, and truncation counts use
-FT_BASE_MODEL's own tokenizer and chat template (transformers' AutoTokenizer
-+ apply_chat_template(tokenize=True)) -- the number that actually matters for
-training. OPENAI_MODEL's tiktoken-based counts are also computed, ONLY for a
-side-by-side comparison showing how much the two tokenizers disagree; they do
-not inform the max_seq_len recommendation.
+Token-length histogram and max_seq_len use FT_BASE_MODEL's own tokenizer and
+chat template (transformers' AutoTokenizer + apply_chat_template(tokenize=True))
+-- the number that actually matters for training. OPENAI_MODEL's tiktoken-based
+counts are also computed, ONLY for a side-by-side comparison showing how much
+the two tokenizers disagree; they do not inform max_seq_len.
+
+max_seq_len is sized to the TRUE MAXIMUM train-split token length (not a
+percentile), rounded up to the nearest 32. The assistant's JSON label sits at
+the END of every sequence, so a percentile-based cap (an earlier version of
+this script used p95) truncates the LABEL on every example above that
+percentile -- poisoning the training set (teaching incomplete JSON), not just
+losing rows from it. A hard assertion after building all three splits fails
+loudly (raises, never warns) if any example anywhere would be truncated at
+max_seq_len.
 
 Run from the repo root:
     .venv\\Scripts\\python.exe src\\ticket_router\\make_sft_dataset.py
@@ -80,8 +88,17 @@ DEFAULT_FT_BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 TARGET_FIELDS = ["queue", "priority", "type"]
 SPLITS = ["train", "val", "test"]
 N_SAMPLES_TO_SHOW = 5
-MAX_SEQ_LEN_PERCENTILE = 95
-ROUND_MAX_SEQ_LEN_TO = 32  # round the recommended max_seq_len up to the nearest multiple of this
+ROUND_MAX_SEQ_LEN_TO = 32  # round max_seq_len up to the nearest multiple of this
+
+# max_seq_len is sized to the TRUE MAXIMUM token length in train (not a
+# percentile) rounded up to ROUND_MAX_SEQ_LEN_TO -- corrected after an
+# earlier version of this script used the 95th percentile, which truncated
+# 144 training examples (1.10%). In an SFT sequence the assistant's JSON
+# label sits at the END, so truncating at any point before the true max
+# truncates the LABEL, not just some ticket text -- that teaches the model
+# to emit incomplete JSON, which poisons the training set rather than merely
+# losing a small slice of it. There is no percentile-based tradeoff that
+# makes sense here: cover the real maximum, full stop.
 
 
 def load_label_map() -> dict:
@@ -224,14 +241,19 @@ def write_samples_report(sample_examples: list[dict], sample_lengths_target: lis
             lines.append("```\n" + rendered + "\n```\n")
 
     lines.append("## Token-length summary (full train split)\n")
-    lines.append(f"**Target model (`{ft_base_model}`) -- this is what the recommendation below is based on:**\n")
+    lines.append(f"**Target model (`{ft_base_model}`) -- this is what `max_seq_len` is based on:**\n")
     lines.append(
         f"n={len(train_lengths_target)}, min={min(train_lengths_target)}, "
         f"p50={percentile(train_lengths_target, 50):.0f}, "
         f"p95={percentile(train_lengths_target, 95):.0f}, "
         f"p99={percentile(train_lengths_target, 99):.0f}, "
-        f"max={max(train_lengths_target)}. Recommended `max_seq_len` = "
-        f"**{recommended_max_seq_len}** (p95 rounded up to the nearest {ROUND_MAX_SEQ_LEN_TO}).\n"
+        f"max={max(train_lengths_target)}. `max_seq_len` = **{recommended_max_seq_len}** -- sized "
+        f"from the **true maximum** (not a percentile), rounded up to the nearest "
+        f"{ROUND_MAX_SEQ_LEN_TO}. The assistant's JSON label sits at the end of every sequence, so "
+        "a percentile-based cap would truncate labels on the examples above that percentile -- "
+        "poisoning the training set (teaching incomplete JSON), not just losing rows from it. "
+        "Verified zero-truncation on all three splits (see PROGRESS.md); enforced by a hard "
+        "assertion in this script that fails loudly if it's ever not true.\n"
     )
     if train_lengths_openai:
         lines.append(
@@ -248,6 +270,23 @@ def write_samples_report(sample_examples: list[dict], sample_lengths_target: lis
     lines.append(
         "\nFull histograms and per-split truncation counts are printed by the script and "
         "recorded in PROGRESS.md.\n"
+    )
+
+    lines.append("## Does raising max_seq_len cost more compute?\n")
+    lines.append(
+        "`max_seq_len` is a **truncation cap** passed to the tokenizer, not a fixed padding "
+        "target. The standard QLoRA/SFT stack for this project (`transformers`/`trl`'s "
+        "`SFTTrainer` or a plain `Trainer` with a causal-LM data collator) pads **per batch to "
+        "that batch's own longest sequence** by default (`padding=True`), not to `max_seq_len` "
+        "for every example -- that only happens if the collator is explicitly configured with "
+        "`padding=\"max_length\"`, which is not the default and not planned here. Raising "
+        "`max_seq_len` from 288 to 384 therefore costs **almost nothing** in compute: it only "
+        "changes anything for the rare batch that happens to contain one of the longer examples "
+        "(train's p95 is 277, so most batches look the same either way); it does not make every "
+        "batch bigger. No training code exists yet (this step still does not start training) -- "
+        "this describes the standard/default behavior of the tools this project will use, and "
+        "whichever collator step-07 actually configures should preserve dynamic per-batch "
+        "padding rather than switching to fixed-length padding, to keep this true.\n"
     )
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -323,22 +362,46 @@ def main() -> None:
         print(f"  {openai_model + ' (tiktoken)':<32s} {o50:5.0f} {o95:5.0f} {o99:5.0f} {max(train_lengths_openai):5d}  <- comparison only")
 
     p50 = percentile(train_lengths_target, 50)
-    p95 = percentile(train_lengths_target, MAX_SEQ_LEN_PERCENTILE)
+    p95 = percentile(train_lengths_target, 95)
     p99 = percentile(train_lengths_target, 99)
+    train_max = max(train_lengths_target)
     print(f"\n[{ft_base_model}] min={min(train_lengths_target)}  p50={p50:.0f}  p95={p95:.0f}  "
-          f"p99={p99:.0f}  max={max(train_lengths_target)}")
+          f"p99={p99:.0f}  max={train_max}  (p50/p95/p99 shown for context only -- max_seq_len "
+          f"below is sized from the true max, not a percentile; see the module-level comment "
+          f"for why)")
 
-    recommended = -(-int(p95) // ROUND_MAX_SEQ_LEN_TO) * ROUND_MAX_SEQ_LEN_TO
-    print(f"\nRecommended max_seq_len (target model {ft_base_model}): "
-          f"p{MAX_SEQ_LEN_PERCENTILE}={p95:.0f} rounded up to the nearest "
-          f"{ROUND_MAX_SEQ_LEN_TO} -> **{recommended}**")
+    recommended = -(-int(train_max) // ROUND_MAX_SEQ_LEN_TO) * ROUND_MAX_SEQ_LEN_TO
+    print(f"\nmax_seq_len (target model {ft_base_model}): true train max={train_max} rounded up "
+          f"to the nearest {ROUND_MAX_SEQ_LEN_TO} -> **{recommended}** (zero-truncation by "
+          f"construction for train; asserted below for every split)")
 
-    print("\nTruncation counts at that max_seq_len, per split (target-model tokenizer):")
+    print("\nTruncation counts at max_seq_len, per split (target-model tokenizer) -- must all be zero:")
     for split in SPLITS:
         lengths = split_lengths_target[split]
         n_truncated = sum(1 for length in lengths if length > recommended)
         print(f"  {split}: {n_truncated} / {len(lengths)} ({n_truncated / len(lengths):.2%}) "
               f"would be truncated")
+
+    # --- Hard assertion: no example's assistant response may be truncated -----------
+    # The assistant's JSON label sits at the end of every sequence, so any truncation
+    # at all truncates the label, not just ticket text -- that would teach the model
+    # to emit incomplete JSON (poisoning the training set), not just lose a row of it.
+    # This must fail loudly (raise), never warn-and-continue.
+    for split in SPLITS:
+        lengths = split_lengths_target[split]
+        over_limit = [i for i, length in enumerate(lengths) if length > recommended]
+        if over_limit:
+            worst = max(lengths[i] for i in over_limit)
+            raise AssertionError(
+                f"{len(over_limit)} example(s) in split '{split}' exceed max_seq_len="
+                f"{recommended} tokens ({ft_base_model} tokenizer) -- longest offender is "
+                f"{worst} tokens. Truncating at max_seq_len would cut off the assistant's JSON "
+                f"label (it sits at the end of the sequence), which poisons the training set "
+                f"rather than just losing data from it. Raise max_seq_len (or ROUND_MAX_SEQ_LEN_TO) "
+                f"and re-run -- do not silently truncate."
+            )
+    print("Assertion passed: zero examples exceed max_seq_len in any split -- no assistant "
+          "response would be truncated.")
 
     write_samples_report(
         train_examples[:N_SAMPLES_TO_SHOW], train_lengths_target[:N_SAMPLES_TO_SHOW],

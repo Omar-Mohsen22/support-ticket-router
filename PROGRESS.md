@@ -892,4 +892,75 @@ gracefully (not a STOP) if absent.
 
 **Still did not start training.**
 
+## Correction (post step-06): max_seq_len must cover the true max, not the 95th percentile
+
+The p95-based `max_seq_len=288` truncated 144 train examples (1.10%). That matters more than the
+percentage suggests: the assistant's JSON label sits at the **end** of every SFT sequence, so
+truncating at 288 cuts the **label**, not just ticket text -- those 144 examples would have taught
+the model to emit incomplete JSON. That's poisoning the training set, not merely losing 1.10% of it.
+The longest example in the whole training set is 377 tokens -- there's no reason to truncate
+anything at that scale. Corrected in four parts, in the order given.
+
+### 1. max_seq_len = 384, confirmed zero truncation on all three splits
+
+`src/ticket_router/make_sft_dataset.py`'s sizing rule changed from "p95 rounded up to the nearest
+32" to **"true train max rounded up to the nearest 32"** -- 377 -> **384**. Also checked val (max
+330) and test (max 363) before relying on this: both comfortably under 384, so the same cap is safe
+for all three splits, not just train.
+
+**Truncation counts at max_seq_len=384 (target-model tokenizer) -- exactly zero everywhere:**
+
+| split | truncated | total |
+|---|---|---|
+| train | **0** | 13,070 |
+| val | **0** | 1,635 |
+| test | **0** | 1,633 |
+
+(Previous, wrong p95-based counts: train 144/13,070, val 15/1,635, test 17/1,633.)
+
+### 2. Hard assertion added, fails loudly
+
+After building and tokenizing all three splits, the script now asserts that no example in any
+split exceeds `max_seq_len`; on violation it `raise`s an `AssertionError` naming the split, the
+count over the limit, and the worst offender's length -- it does not print a warning and continue.
+**Verified the assertion actually fires** by hand-testing the same logic against a deliberately
+too-low fake cap (200 tokens) on a 50-row sample: correctly raised, naming 36 offending examples,
+before this shipped with the real 384 value.
+
+### 3. Padding: per-batch to the batch's longest sequence, not to max_seq_len for every example
+
+`max_seq_len` is a **truncation cap** given to the tokenizer, not a fixed padding target. The
+standard QLoRA/SFT stack this project will use (`transformers`/`trl`'s `SFTTrainer`, or a plain
+`Trainer` with a causal-LM data collator) pads **dynamically per batch**, to that batch's own
+longest sequence (`padding=True` by default) -- not every example out to `max_seq_len`. That only
+happens with an explicit `padding="max_length"` collator config, which is not the default and not
+planned here. **So raising max_seq_len from 288 to 384 costs almost nothing in compute** -- it only
+changes the (rare) batch that happens to contain one of the longer examples; it does not make every
+batch bigger. No training code exists yet (this step still does not start training), so this
+describes the standard/default behavior of the intended tools, not a setting already locked in code
+-- flagged so that whichever collator step-07 actually configures preserves dynamic per-batch
+padding rather than switching to fixed-length padding, to keep this true. Recorded in
+`reports/sft_samples.md` under "Does raising max_seq_len cost more compute?".
+
+### 4. Docs updated
+
+`reports/sft_samples.md`: the token-length summary now states `max_seq_len=384` with the
+true-max-based reasoning (not p95), and a new section answers the padding question. This file
+(above): corrected numbers recorded here as this correction section.
+
+**Files changed:** `src/ticket_router/make_sft_dataset.py` (max-based sizing, hard assertion,
+padding-cost explanation added to the samples report), `reports/sft_samples.md` (regenerated),
+`data/processed/sft/*.jsonl` (regenerated with `max_seq_len=384`'s reasoning reflected in the
+report -- file *content* is unchanged, since the JSONL always stores full untruncated text
+regardless of `max_seq_len`; only the recommended/asserted cap changed). No dependency change.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\make_sft_dataset.py
+```
+Should print "Assertion passed: zero examples exceed max_seq_len in any split" and exit 0. Would
+raise `AssertionError` and exit non-zero if that were ever violated.
+
+**Still did not start training.**
+
 **Next step:** step-07 — not started yet (to be defined).

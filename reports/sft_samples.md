@@ -146,9 +146,9 @@ Gold labels: queue='Customer Service', priority='medium', type='Request'
 
 ## Token-length summary (full train split)
 
-**Target model (`Qwen/Qwen2.5-1.5B-Instruct`) -- this is what the recommendation below is based on:**
+**Target model (`Qwen/Qwen2.5-1.5B-Instruct`) -- this is what `max_seq_len` is based on:**
 
-n=13070, min=167, p50=236, p95=277, p99=290, max=377. Recommended `max_seq_len` = **288** (p95 rounded up to the nearest 32).
+n=13070, min=167, p50=236, p95=277, p99=290, max=377. `max_seq_len` = **384** -- sized from the **true maximum** (not a percentile), rounded up to the nearest 32. The assistant's JSON label sits at the end of every sequence, so a percentile-based cap would truncate labels on the examples above that percentile -- poisoning the training set (teaching incomplete JSON), not just losing rows from it. Verified zero-truncation on all three splits (see PROGRESS.md); enforced by a hard assertion in this script that fails loudly if it's ever not true.
 
 
 **For comparison only -- OpenAI `gpt-4o-mini` via tiktoken (NOT the fine-tuning target, not used for the recommendation above):**
@@ -157,3 +157,7 @@ n=13070, min=165, p50=232, p95=274, p99=287, max=373.
 
 
 Full histograms and per-split truncation counts are printed by the script and recorded in PROGRESS.md.
+
+## Does raising max_seq_len cost more compute?
+
+`max_seq_len` is a **truncation cap** passed to the tokenizer, not a fixed padding target. The standard QLoRA/SFT stack for this project (`transformers`/`trl`'s `SFTTrainer` or a plain `Trainer` with a causal-LM data collator) pads **per batch to that batch's own longest sequence** by default (`padding=True`), not to `max_seq_len` for every example -- that only happens if the collator is explicitly configured with `padding="max_length"`, which is not the default and not planned here. Raising `max_seq_len` from 288 to 384 therefore costs **almost nothing** in compute: it only changes anything for the rare batch that happens to contain one of the longer examples (train's p95 is 277, so most batches look the same either way); it does not make every batch bigger. No training code exists yet (this step still does not start training) -- this describes the standard/default behavior of the tools this project will use, and whichever collator step-07 actually configures should preserve dynamic per-batch padding rather than switching to fixed-length padding, to keep this true.
