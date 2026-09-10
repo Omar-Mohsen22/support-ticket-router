@@ -429,4 +429,67 @@ shuffle), `src/ticket_router/evaluate.py` (`--limit`), `results/results.json`,
 Requires `OPENAI_API_KEY` and `OPENAI_MODEL` in `.env` (never committed; see `.env.example`). A
 rerun over the same rows replays from `.cache/api_predictor/` and costs nothing.
 
+## step-04b: classical ML baseline (TF-IDF + one-vs-rest logistic regression)
+
+**What was built:** `src/ticket_router/predictors/tfidf_baseline.py` -- a single, deliberately
+un-tuned TF-IDF (`max_features=20000, ngram_range=(1,2), stop_words="english", sublinear_tf=True`)
++ `OneVsRestClassifier(LogisticRegression(max_iter=1000, random_state=42))` model, one classifier
+per target field, sharing one TF-IDF vectorizer fit on `train.parquet`'s `text` column only (never
+sees test text during fitting). Predicts all three fields on the full `test.parquet` (1,633 rows).
+Runs in ~3 seconds end to end (fit: 1.81s/0.67s/0.82s for queue/priority/type; predict: <10ms
+total). `cost_usd` is a real `0.0` (not `null` like `api_predictor.py`'s -- there is no ambiguity
+here, no API was called). `latency_ms` is the total batch-predict time divided evenly across rows
+(sklearn predicts the whole test set at once, not row-by-row like an API call) -- documented in the
+script as batch-averaged, not a per-request measurement.
+
+**Why this exists:** to answer one question before step 05 spends any effort: is a target field's
+low zero-shot macro-F1 because the signal genuinely isn't recoverable from the ticket text, or
+because the prompt is failing to extract signal that's actually there? A model trained directly on
+13,070 labelled examples is the cleanest way to tell those two apart, and it costs nothing to ask.
+
+**Results** (`tfidf-baseline`, test split, n=1,633) **alongside every other run so far:**
+
+| run | queue F1 | priority F1 | type F1 | exact-match | cost/1000 |
+|---|---|---|---|---|---|
+| random-baseline | 0.1110 | 0.3427 | 0.2577 | 2.20% | $0.0000 |
+| api-gpt4o-mini-full-test (zero-shot) | 0.2554 | 0.3214 | 0.5209 | 10.90% | ~$0.0643 (external calc) |
+| **tfidf-baseline** | **0.3683** | **0.5445** | **0.8412** | **29.33%** | $0.0000 |
+
+**The diagnostic question this was built to answer, answered:** zero-shot gpt-4o-mini scored
+macro-F1 0.3214 on `priority` -- indistinguishable from random-from-distribution's 0.3427. TF-IDF,
+trained on the same 13,070 examples, scores **0.5445** -- clearly and substantially higher than
+both (+59% relative over random, +69% relative over the zero-shot LLM). **The numbers support the
+second conclusion: the signal is there, and the LLM prompt is what is failing, not that `priority`
+is unpredictable from ticket text in this dataset.** This holds even more strongly for `queue`
+(0.3683 vs. 0.2554) and `type` (0.8412 vs. 0.5209) -- TF-IDF beats the zero-shot LLM on **all three
+fields**, not just `priority`. Per-field weak spots worth step-05's attention: `queue` classes
+General Inquiry and Human Resources still score 0.0 F1 even for TF-IDF (support 24 and 35 -- may
+be a genuinely hard minority-class problem, not just a prompting one); `priority=low` has high
+precision but poor recall (0.24) for TF-IDF, suggesting the model defaults to high/medium when
+unsure.
+
+**Not tuned, as instructed:** no hyperparameter search, no cross-validation, no feature selection
+beyond the fixed `max_features=20000` cap -- a single sensible configuration, because the question
+was "is there signal at all", not "what's the best classical score achievable".
+
+**Dependency added:** `scikit-learn==1.9.0` -- `TfidfVectorizer` + `OneVsRestClassifier` +
+`LogisticRegression` for the model itself. This is a different concern from `metrics.py` (step-03),
+which deliberately stayed hand-rolled/sklearn-free for macro-F1 etc.; there's no reasonable
+hand-rolled substitute for TF-IDF + logistic regression, so unlike the metrics decision, adding
+scikit-learn here is the straightforward choice.
+
+**Files added:** `src/ticket_router/predictors/tfidf_baseline.py`,
+`results/tfidf-baseline.predictions.jsonl`. **Files changed:** `requirements.txt` (`scikit-learn`),
+`results/results.json`, `results/comparison.md` (both regenerated with the new run).
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe src\ticket_router\predictors\tfidf_baseline.py
+.venv\Scripts\python.exe src\ticket_router\evaluate.py --predictions results\tfidf-baseline.predictions.jsonl --split test --run-name tfidf-baseline
+.venv\Scripts\python.exe src\ticket_router\report.py
+```
+Deterministic given `random_state=42` and the fixed train/test parquet files -- no `.env`, no
+network call, no cost.
+
 **Next step:** step-05 — not started yet (to be defined).

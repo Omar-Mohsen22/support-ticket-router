@@ -6,3 +6,4 @@ pydantic==2.13.5  # step-03: TicketLabels schema -- validates a prediction's que
 pytest==9.1.1  # step-03: test runner for tests/test_metrics.py
 openai==3.11.0  # step-04: official SDK for calling the OpenAI API (api_predictor.py) -- auth, structured-output requests, and built-in rate-limit backoff, instead of hand-rolling HTTP + retry logic
 python-dotenv==1.2.3  # step-04: load_dotenv(override=True) so the project's .env always wins over a stale/ambient OS environment variable of the same name
+scikit-learn==1.9.0  # step-04b: TfidfVectorizer + OneVsRestClassifier(LogisticRegression) for the classical ML baseline (tfidf_baseline.py) -- the model itself, not a metrics helper (metrics.py stays hand-rolled, per step-03's dependency-minimalism choice)

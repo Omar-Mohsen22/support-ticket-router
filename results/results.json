@@ -376,5 +376,149 @@
       "per_1000_usd": 0.0,
       "n_with_cost": 0
     }
+  },
+  "tfidf-baseline": {
+    "run_name": "tfidf-baseline",
+    "split": "test",
+    "predictions_file": "results/tfidf-baseline.predictions.jsonl",
+    "n_gold": 1633,
+    "n_valid": 1633,
+    "invalid_rate": 0.0,
+    "exact_match_rate": 0.29332516840171463,
+    "fields": {
+      "queue": {
+        "accuracy": 0.5082669932639314,
+        "macro_f1": 0.3682749250410369,
+        "per_class": {
+          "Billing and Payments": {
+            "support": 159,
+            "precision": 0.9145299145299145,
+            "recall": 0.6729559748427673,
+            "f1": 0.7753623188405796
+          },
+          "Customer Service": {
+            "support": 241,
+            "precision": 0.47533632286995514,
+            "recall": 0.43983402489626555,
+            "f1": 0.4568965517241379
+          },
+          "General Inquiry": {
+            "support": 24,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          },
+          "Human Resources": {
+            "support": 35,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          },
+          "IT Support": {
+            "support": 194,
+            "precision": 0.5512820512820513,
+            "recall": 0.22164948453608246,
+            "f1": 0.3161764705882353
+          },
+          "Product Support": {
+            "support": 307,
+            "precision": 0.445993031358885,
+            "recall": 0.4169381107491857,
+            "f1": 0.43097643097643096
+          },
+          "Returns and Exchanges": {
+            "support": 82,
+            "precision": 1.0,
+            "recall": 0.10975609756097561,
+            "f1": 0.1978021978021978
+          },
+          "Sales and Pre-Sales": {
+            "support": 51,
+            "precision": 1.0,
+            "recall": 0.13725490196078433,
+            "f1": 0.24137931034482762
+          },
+          "Service Outages and Maintenance": {
+            "support": 66,
+            "precision": 0.8604651162790697,
+            "recall": 0.5606060606060606,
+            "f1": 0.6788990825688073
+          },
+          "Technical Support": {
+            "support": 474,
+            "precision": 0.4522439585730725,
+            "recall": 0.8291139240506329,
+            "f1": 0.5852568875651527
+          }
+        },
+        "n": 1633
+      },
+      "priority": {
+        "accuracy": 0.5964482547458665,
+        "macro_f1": 0.5445047584749398,
+        "per_class": {
+          "high": {
+            "support": 656,
+            "precision": 0.6387665198237885,
+            "recall": 0.663109756097561,
+            "f1": 0.6507105459985042
+          },
+          "low": {
+            "support": 345,
+            "precision": 0.7410714285714286,
+            "recall": 0.24057971014492754,
+            "f1": 0.36323851203501095
+          },
+          "medium": {
+            "support": 632,
+            "precision": 0.5428571428571428,
+            "recall": 0.7215189873417721,
+            "f1": 0.6195652173913043
+          }
+        },
+        "n": 1633
+      },
+      "type": {
+        "accuracy": 0.8493570116350275,
+        "macro_f1": 0.8412184299422766,
+        "per_class": {
+          "Change": {
+            "support": 155,
+            "precision": 1.0,
+            "recall": 0.9612903225806452,
+            "f1": 0.9802631578947368
+          },
+          "Incident": {
+            "support": 666,
+            "precision": 0.7646326276463262,
+            "recall": 0.9219219219219219,
+            "f1": 0.8359428182437032
+          },
+          "Problem": {
+            "support": 336,
+            "precision": 0.7376237623762376,
+            "recall": 0.44345238095238093,
+            "f1": 0.5539033457249071
+          },
+          "Request": {
+            "support": 476,
+            "precision": 0.9916492693110647,
+            "recall": 0.9978991596638656,
+            "f1": 0.9947643979057591
+          }
+        },
+        "n": 1633
+      }
+    },
+    "latency_ms": {
+      "p50": 0.0042556031876279585,
+      "p95": 0.0042556031876279585,
+      "n": 1633
+    },
+    "cost": {
+      "total_usd": 0.0,
+      "per_1000_usd": 0.0,
+      "n_with_cost": 1633
+    }
   }
 }
