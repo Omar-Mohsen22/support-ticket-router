@@ -37,3 +37,8 @@ data/processed/*
 
 # Local model weights
 *.gguf
+
+# step-07: Colab training outputs (checkpoints, adapter) -- pushed to the HF
+# Hub instead, per train/config.yaml; never expected to exist in this repo,
+# but excluded defensively since train/config.yaml references outputs/*.
+outputs/

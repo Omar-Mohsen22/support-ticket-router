@@ -963,4 +963,140 @@ raise `AssertionError` and exit non-zero if that were ever violated.
 
 **Still did not start training.**
 
-**Next step:** step-07 — not started yet (to be defined).
+## step-07: QLoRA fine-tuning notebook + config (no training run yet)
+
+**What was built:** `notebooks/train_qlora.ipynb` (34 cells, Colab-only, free-T4-targeted) and
+`train/config.yaml` (every hyperparameter the notebook uses -- nothing hardcoded in the notebook
+itself). Base model: `Qwen/Qwen2.5-1.5B-Instruct` (the same `FT_BASE_MODEL` set in step-06, not a
+hosted API model -- the whole point of steps 07-12 is a model that can be self-hosted, quantized,
+and served in Docker).
+
+**A scope-honest note on local verification, upfront**: this environment has no GPU, and
+attempting a CPU-only `torch`+`trl` install to test the training-loop code hit a hard local
+disk-space wall (`OSError: [WinError 206]` on a deep temp path, then `[Errno 28] No space left on
+device` after moving to a short path and retrying -- the machine's C: drive is at 100% from
+something unrelated to this session, 19MB-779MB free depending on the moment). Full end-to-end
+QLoRA training (bitsandbytes 4-bit loading, `SFTTrainer`, the actual GPU step) could **not** be
+executed or tested here. What COULD be, and was, verified for real before writing a line of the
+notebook: the two mechanisms explicitly flagged as correctness-critical in the instructions
+(completion-only masking, and padding behavior) -- see below. The rest of the notebook (model
+loading, `SFTConfig`/`SFTTrainer` wiring, generation) is written to the current standard
+`transformers`/`trl`/`peft` API to the best of available knowledge, but wasn't executable here --
+flagged at the top of the notebook itself so this isn't a surprise mid-run.
+
+### Completion-only loss: `trl.DataCollatorForCompletionOnlyLM`, verified by hand
+
+**Mechanism, stated explicitly (as asked): `trl.DataCollatorForCompletionOnlyLM`**, keyed on
+`response_template: "<|im_start|>assistant\n"` (Qwen2.5's chat-template assistant marker, in
+`train/config.yaml`). This collator finds that token sequence in each example and masks
+(`label = -100`, PyTorch's cross-entropy `ignore_index`) everything up to and including it --
+system + user tokens are ignored by the loss; only the assistant's JSON response (and its
+`<|im_end|>`) contributes.
+
+**Verified for real** (no trl install available -- reproduced the collator's exact token-matching
+logic by hand, using only `transformers`' `AutoTokenizer`, already installed from step-06):
+1. Checked whether `response_template` tokenizes identically standalone vs. embedded in a full
+   formatted sequence (the classic failure mode with this collator on some tokenizers/templates).
+   For Qwen2.5: **`<|im_start|>` and `<|im_end|>` are protected special tokens**, so it tokenizes
+   identically both ways -- no silent mismatch.
+2. Built one real example (system + user + assistant turns, Qwen's chat template applied),
+   located the response_template's 3 tokens in the full 64-token sequence at position 44, and
+   masked everything through position 46 (inclusive).
+
+**Printed proof (one full example, exactly what the notebook's cell 6 reproduces live)**:
+
+```
+total tokens: 64  masked (-100): 47  unmasked (real loss targets): 17
+
+ idx token_id     label  token_text
+   0   151644      -100  [MASKED] '<|im_start|>'
+   1     8948      -100  [MASKED] 'system'
+   ...                                          (system + user turns, all -100)
+  44   151644      -100  [MASKED] '<|im_start|>'
+  45    77091      -100  [MASKED] 'assistant'
+  46      198      -100  [MASKED] 'Ċ'
+  47     4913      4913  [LOSS  ] '{"'
+  48     4584      4584  [LOSS  ] 'queue'
+  ...                                          (assistant JSON content, real token ids)
+  62   151645    151645  [LOSS  ] '<|im_end|>'
+  63      198       198  [LOSS  ] 'Ċ'
+```
+
+47 masked, 17 contributing to loss -- and decoding just the 17 unmasked tokens gives exactly
+`'{"queue":"IT Support","priority":"high","type":"Incident"}<|im_end|>\n'`, byte-for-byte the
+assistant's turn and nothing else. Full un-truncated listing is in the notebook's own output once
+run; this is the same logic `DataCollatorForCompletionOnlyLM` is documented to perform.
+
+### Padding: confirmed dynamic per-batch, not fixed to max_seq_len
+
+**Answer to the question asked directly: dynamic per-batch padding** (`padding=True`, the
+collator's default) -- each batch is padded to *that batch's own longest example*, not to
+`max_seq_len` for every example. `max_seq_len` (384, from step-06) is a **truncation cap** passed
+to the tokenizer, not a padding target. **So raising it costs almost nothing in compute** -- it
+only changes the rare batch containing one of the longer examples; it does not make every batch
+bigger.
+
+**Verified for real** (`tokenizer.pad()`, no trl/torch needed for this specific check): padded two
+synthetic batches of very different native lengths --
+
+```
+short batch (native lens 10,15) -> padded lens: [15, 15]
+long  batch (native lens 50,60,70) -> padded lens: [70, 70, 70]
+```
+
+If padding were fixed to a constant length, both batches would show the same padded length
+regardless of their native lengths. They don't -- each batch is padded independently to its own
+longest row. Reproduced against the actual `DataCollatorForCompletionOnlyLM` (not just raw
+`tokenizer.pad()`) in the notebook's cell 7, with two batches of the real tokenized training data.
+
+### Config highlights (`train/config.yaml` -- full file has every value, with reasoning in comments)
+
+- **QLoRA**: 4-bit NF4, double quantization, bfloat16 compute dtype.
+- **LoRA**: r=16, alpha=32, dropout=0.05, on **both** attention (`q/k/v/o_proj`) **and** MLP
+  (`gate/up/down_proj`) -- attention-only would leave most of a Qwen2 layer's parameters
+  untouched.
+- **Training**: 3 epochs, effective batch size 16 (per-device 4 Γ— grad-accum 4), cosine LR
+  schedule, `paged_adamw_8bit`, gradient checkpointing on.
+- **Best-checkpoint selection**: `eval_strategy=steps, eval_steps=50, load_best_model_at_end=true,
+  metric_for_best_model=eval_loss, greater_is_better=false` -- the **best** checkpoint by
+  validation loss is kept, not simply the last step.
+- **No class weighting** (explicit known-limitation comment in the config): real queue-class
+  imbalance exists (e.g. General Inquiry/Human Resources have far fewer rows than Technical
+  Support), but this is the first fine-tuning run for the project and the goal is an
+  interpretable baseline with the fewest moving parts -- adding weighting now would make it
+  unclear whether any result change comes from fine-tuning itself or the weighting scheme.
+  Revisit if per-class evaluation later shows minority classes are being ignored.
+- **`hub_model_id` deliberately left blank** -- no placeholder HF username was guessed; the
+  notebook raises a clear `ValueError` at the push step if it's still empty when reached.
+
+### Notebook structure (14 numbered sections, cell order stated at the top of the notebook itself)
+
+Check GPU -> install deps -> get the repo (flags that `data/processed/` is gitignored, so a plain
+`git clone` will NOT include the actual training data -- upload/sync it separately) -> load
+config.yaml -> load tokenizer + SFT datasets -> **verify completion-only masking** (live,
+real-token proof) -> **verify dynamic padding** (live, real-token proof) -> load base model in
+4-bit + attach LoRA -> build a config-driven trainer factory -> **smoke test** (~100 steps: loss
+curve + 5 generated outputs, validated against `schema.TicketLabels` -- reused from step-03, not
+reimplemented) -> **explicit STOP-AND-CONFIRM markdown cell** before the full run -> **full
+training run** (loss curve + confirms `trainer.model` is the best checkpoint, not the last) ->
+save adapter + push to HF Hub (under the user's own account/repo id) -> **post-train preview**:
+generate + print alongside gold labels on 20 val examples.
+
+Expected runtime (approximate, free T4): smoke test ~5-10 min, full run ~45-90 min. Expected VRAM:
+~6-10 GB (comfortable on the T4's 16 GB) -- both stated at the top of the notebook, along with the
+exact cell order to run.
+
+**Dependencies**: none added to this project's `requirements.txt` -- the training stack
+(`transformers`, `trl`, `peft`, `accelerate`, `bitsandbytes`, `datasets`) is installed by the
+notebook's own first `!pip install` cell, inside the Colab runtime only, deliberately kept
+separate from the local pipeline's environment (which never needs a GPU training stack).
+
+**Files added:** `notebooks/train_qlora.ipynb`, `train/config.yaml`. **Files changed:**
+`.gitignore` (added `outputs/`, defensive -- Colab checkpoint/adapter paths referenced in
+`train/config.yaml`, never expected to materialize in this repo since the adapter is pushed to
+the Hub instead).
+
+**Did not run any training, locally or otherwise -- as instructed.** Waiting on the user to run
+`notebooks/train_qlora.ipynb` on Colab and report back the result.
+
+**Next step:** step-08 — not started yet (to be defined once the Colab run's result is known).

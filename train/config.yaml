@@ -1,0 +1,155 @@
+# ==============================================================================
+# QLoRA fine-tuning config for ticket-router -- step-07
+# Every hyperparameter used by notebooks/train_qlora.ipynb lives here.
+# Nothing is hardcoded in the notebook itself: it reads this file and only
+# this file for every setting below.
+# ==============================================================================
+
+# --- Base model ---------------------------------------------------------------
+# The open-weights fine-tuning target set in step-06 (.env's FT_BASE_MODEL,
+# defaulting to this same value in code) -- NOT a hosted API model. This is
+# the whole point of steps 07-12: a model we can self-host, quantize, and
+# serve ourselves. Confirmed publicly downloadable, not gated, before it was
+# picked as the default (HF API: "gated": false, "private": false,
+# license apache-2.0 -- see PROGRESS.md step-06).
+base_model: Qwen/Qwen2.5-1.5B-Instruct
+
+# --- Data -----------------------------------------------------------------------
+# Written by src/ticket_router/make_sft_dataset.py (step-06). Paths are
+# relative to the repo root. NOTE: data/processed/ is gitignored (see
+# .gitignore) -- these files are NOT included in a plain `git clone`; they
+# must be uploaded/synced separately when running on Colab (see the
+# notebook's "Get the repo" cell).
+train_file: data/processed/sft/train.jsonl
+val_file: data/processed/sft/val.jsonl
+
+# From step-06's correction: sized to the TRUE MAXIMUM train-example length
+# (377 tokens, Qwen2.5-1.5B-Instruct's own tokenizer), rounded up to the
+# nearest 32 -- deliberately NOT a percentile. The assistant's JSON label
+# sits at the END of every sequence, so a percentile-based cap truncates the
+# label on every example above that percentile, teaching the model to emit
+# incomplete JSON -- that poisons the training set, not just loses rows from
+# it. See PROGRESS.md's step-06 correction for the full reasoning and the
+# verified zero-truncation counts on all three splits.
+max_seq_len: 384
+
+# --- Reproducibility -------------------------------------------------------------
+seed: 42
+
+# --- Quantization (QLoRA: 4-bit NF4) ----------------------------------------------
+quantization:
+  load_in_4bit: true
+  bnb_4bit_quant_type: nf4
+  bnb_4bit_compute_dtype: bfloat16
+  bnb_4bit_use_double_quant: true
+
+# --- LoRA --------------------------------------------------------------------------
+lora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  bias: none
+  task_type: CAUSAL_LM
+  # Attention projections AND MLP projections, per the instruction -- LoRA on
+  # attention alone would leave the MLP blocks (most of a Qwen2 layer's
+  # parameters) completely untouched by fine-tuning.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+gradient_checkpointing: true
+
+# --- Training loop -----------------------------------------------------------------
+num_train_epochs: 3
+per_device_train_batch_size: 4
+per_device_eval_batch_size: 4
+gradient_accumulation_steps: 4   # effective batch size = 4 * 4 = 16
+learning_rate: 2.0e-4
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+weight_decay: 0.0
+optim: paged_adamw_8bit
+max_grad_norm: 0.3
+
+# --- Completion-only loss -----------------------------------------------------------
+# The loss is computed ONLY on the assistant's response tokens; system and
+# user tokens are masked to -100 (PyTorch's cross-entropy ignore_index) via
+# TRL's DataCollatorForCompletionOnlyLM, keyed on response_template below.
+# Without this, most of the model's fine-tuning capacity goes into learning
+# to WRITE support tickets (reproducing the user turn) instead of learning
+# to CLASSIFY them (producing the assistant turn) -- the actual task.
+#
+# Verified by hand before the notebook was written (no trl/torch install was
+# possible locally -- see PROGRESS.md step-07 for why): for Qwen2.5's
+# tokenizer, <|im_start|> and <|im_end|> are protected special tokens, so
+# response_template tokenizes IDENTICALLY standalone and in-context -- no
+# silent mismatch (the classic failure mode with this collator on other
+# tokenizers). A real worked example (64 tokens: 47 masked, 17 contributing
+# to loss -- exactly the assistant's JSON + end-of-turn marker) is recorded
+# in PROGRESS.md and reproduced live in the notebook's verification cell.
+completion_only_loss: true
+response_template: "<|im_start|>assistant\n"   # Qwen2.5's chat-template assistant marker
+
+# --- Padding / collator ---------------------------------------------------------------
+# Dynamic per-batch padding: each batch is padded to ITS OWN longest example,
+# not to max_seq_len for every example. This was left open in step-06;
+# confirmed by hand here (tokenizer.pad() behavior, no trl/torch needed for
+# this specific check -- see PROGRESS.md step-07) and locked in via
+# DataCollatorForCompletionOnlyLM's default padding=True behavior. Raising
+# max_seq_len therefore costs ~nothing in compute -- it only changes the rare
+# batch that contains one of the longer examples.
+padding: dynamic_per_batch
+
+# --- Evaluation & checkpointing ---------------------------------------------------------
+eval_strategy: steps
+eval_steps: 50
+save_strategy: steps
+save_steps: 50
+logging_steps: 10
+save_total_limit: 3
+load_best_model_at_end: true
+metric_for_best_model: eval_loss
+greater_is_better: false   # lower eval_loss is better -- keep the BEST checkpoint, not the last
+
+# --- Smoke test (short run before committing to the full run) -----------------------------
+smoke_test:
+  max_steps: 100
+  eval_steps: 20
+  logging_steps: 5
+  n_generated_examples: 5
+
+# --- Post-training eyeball preview (right after training, before full harness eval) ---------
+post_train_preview:
+  n_val_examples: 20
+
+# --- Known limitation: no class weighting --------------------------------------------------
+# No per-class loss weighting or minority-class oversampling is applied,
+# despite real queue-class imbalance in training data (e.g. "General
+# Inquiry"/"Human Resources" have far fewer rows than "Technical Support" --
+# see data/README.md's label distribution). Reason: this is the FIRST
+# fine-tuning run for this project, and the goal is an interpretable
+# baseline result with the fewest moving parts -- adding class weighting now
+# would make it unclear whether any change in results comes from
+# fine-tuning itself or from the weighting scheme on top of it. Revisit if
+# per-class evaluation (after this step) shows minority classes are being
+# systematically ignored.
+class_weighting: none
+
+# --- Hugging Face Hub ------------------------------------------------------------------------
+push_to_hub: true
+# Fill in with <your-hf-username>/<repo-name> before running -- left blank
+# deliberately (no placeholder username guessed) since it must be your own
+# account. The notebook raises a clear error if this is still empty when it
+# reaches the push step.
+hub_model_id: ""
+hub_private: true
+
+# --- Output paths (Colab-local; the adapter is pushed to the Hub, not committed here) ---------
+output_dir: outputs/qlora-run
+smoke_test_output_dir: outputs/qlora-smoke-test
+adapter_output_dir: outputs/qlora-adapter
