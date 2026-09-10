@@ -1,0 +1,72 @@
+[
+  {
+    "id": "tkt_015883",
+    "text": "Seek assistance with billing",
+    "queue": "Billing and Payments",
+    "priority": "medium",
+    "type": "Problem"
+  },
+  {
+    "id": "tkt_010111",
+    "text": "Hello support team",
+    "queue": "Customer Service",
+    "priority": "medium",
+    "type": "Change"
+  },
+  {
+    "id": "tkt_004696",
+    "text": "Problems with the server",
+    "queue": "General Inquiry",
+    "priority": "medium",
+    "type": "Incident"
+  },
+  {
+    "id": "tkt_018926",
+    "text": "Can you provide details on integrating data analytics with FL Studio?",
+    "queue": "Human Resources",
+    "priority": "medium",
+    "type": "Request"
+  },
+  {
+    "id": "tkt_003970",
+    "text": "Suspicion of a data security breach",
+    "queue": "IT Support",
+    "priority": "high",
+    "type": "Incident"
+  },
+  {
+    "id": "tkt_008551",
+    "text": "The SaaS platform is currently facing outages.",
+    "queue": "Product Support",
+    "priority": "medium",
+    "type": "Incident"
+  },
+  {
+    "id": "tkt_012241",
+    "text": "Concern Regarding Safety of Medical Information\nSeek Assistance",
+    "queue": "Returns and Exchanges",
+    "priority": "high",
+    "type": "Incident"
+  },
+  {
+    "id": "tkt_019567",
+    "text": "Support with Digital Marketing\nI need assistance",
+    "queue": "Sales and Pre-Sales",
+    "priority": "low",
+    "type": "Problem"
+  },
+  {
+    "id": "tkt_013474",
+    "text": "Figma Support\nEnhance Figma data analytics projects",
+    "queue": "Service Outages and Maintenance",
+    "priority": "high",
+    "type": "Request"
+  },
+  {
+    "id": "tkt_005423",
+    "text": "Several products are impacted",
+    "queue": "Technical Support",
+    "priority": "high",
+    "type": "Incident"
+  }
+]

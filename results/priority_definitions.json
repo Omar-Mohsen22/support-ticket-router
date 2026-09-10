@@ -1,0 +1,51 @@
+{
+  "definitions": {
+    "high": "Training tickets labeled `high` priority are, by relative word frequency against the other two priority values (words appearing in at least 20 `high`-priority tickets), most distinguished by: severe, timeouts, major, reverting, rolling, overloads, outage, reliability, interruption, ceased, interrupted, capacity.",
+    "low": "Training tickets labeled `low` priority are, by relative word frequency against the other two priority values (words appearing in at least 20 `low`-priority tickets), most distinguished by: com, lack, providers, browser, feature, low, commitments, finds, utmost, value, long, delay.",
+    "medium": "Training tickets labeled `medium` priority are, by relative word frequency against the other two priority values (words appearing in at least 20 `medium`-priority tickets), most distinguished by: demonstrate, scope, app, organizations, modifying, knowing, transaction, lately, compatible, month, predictions, conflicting."
+  },
+  "top_words": {
+    "high": [
+      "severe",
+      "timeouts",
+      "major",
+      "reverting",
+      "rolling",
+      "overloads",
+      "outage",
+      "reliability",
+      "interruption",
+      "ceased",
+      "interrupted",
+      "capacity"
+    ],
+    "low": [
+      "com",
+      "lack",
+      "providers",
+      "browser",
+      "feature",
+      "low",
+      "commitments",
+      "finds",
+      "utmost",
+      "value",
+      "long",
+      "delay"
+    ],
+    "medium": [
+      "demonstrate",
+      "scope",
+      "app",
+      "organizations",
+      "modifying",
+      "knowing",
+      "transaction",
+      "lately",
+      "compatible",
+      "month",
+      "predictions",
+      "conflicting"
+    ]
+  }
+}

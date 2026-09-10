@@ -546,4 +546,79 @@ new dependency (reuses `scikit-learn` from step-04b).
 Deterministic (same fixed TF-IDF config, same fixed parquet files); requires
 `results/tfidf-baseline.predictions.jsonl` to already exist (from step-04b).
 
-**Next step:** step-05 — not started yet (to be defined).
+## step-05: few-shot baseline (two variants, then stop)
+
+**What was built:** extended `src/ticket_router/predictors/api_predictor.py` (same predictor,
+same test split, per the instruction) with a `--variant {zero-shot,coverage,coverage-priority}`
+flag:
+- `select_few_shot_examples(train)`: 10 examples, one per queue class, each that class's
+  **shortest** training `text` (ties broken by lowest `id`) -- deterministic, documented in code,
+  saved to `results/few_shot_examples.json` on every run for traceability.
+- `derive_priority_definitions(train)`: for each `priority` value, a Laplace-smoothed
+  relative-word-frequency ratio against training tickets of the other two values (keyness/log-odds
+  style), words restricted to those appearing in >=20 training tickets of that value -- **derived
+  from data, not written from imagination**, saved with the full ranked word lists to
+  `results/priority_definitions.json`.
+- `build_initial_messages()` extended to optionally prepend few-shot example turns and/or a
+  priority-definitions paragraph to the system prompt; the existing per-call cache key (hash of
+  model + exact messages + ticket id) needed no changes -- it already differs correctly across
+  variants since the messages differ.
+
+Ran both variants on the full 1,633-row test split, scored through the unchanged harness
+(`evaluate.py`), regenerated `results/comparison.md`. **Extended `report.py`** to also sync the
+comparison table into the root `README.md`'s "## Results" section (between fixed HTML-comment
+markers, replaced in place on every run) -- the table there is never hand-typed, always regenerated
+from `results/results.json`.
+
+**Results** (full comparison in `reports/prompting_notes.md`; reference rows from earlier steps):
+
+| run | queue F1 | priority F1 | type F1 | exact-match | invalid-rate |
+|---|---|---|---|---|---|
+| zero-shot (step-04) | 0.2554 | 0.3214 | 0.5209 | 10.90% | 0.00% |
+| **A: coverage** (10 few-shot) | 0.2442 | 0.3135 | 0.4319 | 6.86% | 0.37% |
+| **B: coverage-priority** (A + priority defs) | 0.2241 | 0.3224 | 0.4710 | 6.92% | 2.02% |
+| tfidf-baseline (reference) | 0.3683 | 0.5445 | 0.8412 | 29.33% | 0.00% |
+
+**Verdict, stated plainly: few-shot prompting did NOT close the gap to TF-IDF on any field --
+`queue` and `type` got measurably worse in both variants, and `priority` barely moved (+0.0010 in
+Variant B, not a real change) despite Variant B handing the model empirically-derived priority
+vocabulary directly in the prompt.** Full reasoning and the derived word lists are in
+`reports/prompting_notes.md`.
+
+**The standout persisted error**: `priority = low` scores **0/345 recall in all three LLM
+variants** -- zero-shot, coverage, and coverage-priority alike. The model never predicts `low`,
+regardless of prompting, even when told the words most associated with it in training data. A
+structural bias, not a missing-information problem.
+
+**Secondary, operational finding**: invalid-output rate rose with prompt size (0.00% -> 0.37% ->
+2.02%), but every one of those failures (6 + 33) was confirmed (by inspecting each failed row's
+error field) to be a `RateLimitError` -- zero JSON-parse or schema-validation failures in either
+variant. Longer few-shot prompts consume more tokens/request, pushing closer to the account's
+per-minute token budget under `CONCURRENCY_LIMIT=5`. Reported as an infrastructure side-effect, not
+folded into the macro-F1 story as if it reflected content quality.
+
+**No new dependency**: `CountVectorizer` (sklearn, already installed since step-04b) and `numpy`
+(already installed since step-02) cover everything needed.
+
+**Files added:** `reports/prompting_notes.md`, `results/few_shot_examples.json`,
+`results/priority_definitions.json`, `results/api-gpt4o-mini-fewshot-coverage.predictions.jsonl`,
+`results/api-gpt4o-mini-fewshot-coverage-priority.predictions.jsonl`. **Files changed:**
+`src/ticket_router/predictors/api_predictor.py` (`--variant` support), `src/ticket_router/report.py`
+(README sync), `README.md` (results table added), `results/results.json`, `results/comparison.md`
+(both regenerated with the 2 new runs).
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\predictors\api_predictor.py --split test --variant coverage --run-name api-gpt4o-mini-fewshot-coverage
+.venv\Scripts\python.exe src\ticket_router\predictors\api_predictor.py --split test --variant coverage-priority --run-name api-gpt4o-mini-fewshot-coverage-priority
+.venv\Scripts\python.exe src\ticket_router\evaluate.py --predictions results\api-gpt4o-mini-fewshot-coverage.predictions.jsonl --split test --run-name api-gpt4o-mini-fewshot-coverage
+.venv\Scripts\python.exe src\ticket_router\evaluate.py --predictions results\api-gpt4o-mini-fewshot-coverage-priority.predictions.jsonl --split test --run-name api-gpt4o-mini-fewshot-coverage-priority
+.venv\Scripts\python.exe src\ticket_router\report.py
+```
+Requires `OPENAI_API_KEY`/`OPENAI_MODEL` in `.env`. Reruns replay from `.cache/api_predictor/` and
+cost nothing (the few-shot/priority-definition selection is deterministic, so cache keys are stable
+across reruns).
+
+**Stopped after two variants, as instructed** -- no further prompt iteration.
+
+**Next step:** step-06 — not started yet (to be defined).

@@ -44,10 +44,12 @@ from pathlib import Path
 # Make `ticket_router` importable when this file is run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI, APIStatusError, BadRequestError
 from pydantic import ValidationError
+from sklearn.feature_extraction.text import CountVectorizer
 
 from ticket_router.schema import TicketLabels
 
@@ -57,6 +59,8 @@ RESULTS_DIR = REPO_ROOT / "results"
 LABEL_MAP_PATH = PROCESSED_DIR / "label_map.json"
 ENV_PATH = REPO_ROOT / ".env"
 CACHE_DIR = REPO_ROOT / ".cache" / "api_predictor"
+FEW_SHOT_EXAMPLES_PATH = RESULTS_DIR / "few_shot_examples.json"
+PRIORITY_DEFINITIONS_PATH = RESULTS_DIR / "priority_definitions.json"
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 TARGET_FIELDS = ["queue", "priority", "type"]
@@ -64,6 +68,22 @@ TARGET_FIELDS = ["queue", "priority", "type"]
 CONCURRENCY_LIMIT = 5
 MAX_CONTENT_RETRIES = 2   # content-validation retries: up to 3 attempts total per ticket
 SDK_MAX_RETRIES = 5       # the openai SDK's own built-in backoff on 429/5xx/connection errors
+
+# --- Step-05 few-shot config ---------------------------------------------------
+# Variant A ("coverage"): one few-shot example per queue class, selected
+# deterministically as that class's SHORTEST training text (ties broken by
+# lowest id) -- keeps the prompt small while giving the model one concrete
+# example of every queue label it's allowed to use.
+#
+# Variant B ("coverage-priority"): variant A's examples, plus a one-sentence,
+# per-priority-value description derived empirically from the training data:
+# for each priority value, the words most disproportionately frequent in that
+# value's training tickets vs. the other two values (Laplace-smoothed relative
+# frequency ratio, restricted to words appearing in at least
+# PRIORITY_DEF_MIN_DF training tickets of that value, to avoid noise from rare
+# words). This is a keyness/log-odds-style analysis, not a hand-written guess.
+PRIORITY_DEF_TOP_N = 12
+PRIORITY_DEF_MIN_DF = 20
 
 _print_lock = threading.Lock()
 _jsonl_lock = threading.Lock()
@@ -95,17 +115,95 @@ def build_ticket_schema_dict() -> dict:
     return schema
 
 
-def build_initial_messages(ticket_text: str, label_map: dict) -> list[dict]:
-    system = (
+def select_few_shot_examples(train: pd.DataFrame) -> list[dict]:
+    """Variant A's 10 few-shot examples: one per queue class, the SHORTEST
+    training `text` in that class (ties broken by lowest `id`), so the
+    prompt stays small. Fully deterministic given the fixed train.parquet."""
+    examples = []
+    for queue_value in sorted(train["queue"].unique()):
+        subset = train[train["queue"] == queue_value].copy()
+        subset["_text_len"] = subset["text"].str.len()
+        subset = subset.sort_values(["_text_len", "id"])
+        row = subset.iloc[0]
+        examples.append({
+            "id": row["id"], "text": row["text"],
+            "queue": row["queue"], "priority": row["priority"], "type": row["type"],
+        })
+    return examples
+
+
+def derive_priority_definitions(train: pd.DataFrame) -> tuple[dict, dict]:
+    """Variant B's per-priority-value descriptions, derived empirically from
+    train.parquet (never hand-written): for each priority value, find the
+    words most disproportionately frequent in that value's tickets vs. the
+    other two values, using a Laplace-smoothed relative-frequency ratio
+    (a simple keyness/log-odds analysis), restricted to words occurring in at
+    least PRIORITY_DEF_MIN_DF tickets of that value.
+
+    Returns (definitions, top_words): `definitions[value]` is the one-sentence
+    prompt string; `top_words[value]` is the raw ranked word list, kept for
+    the prompting_notes.md report so the derivation is checkable, not just
+    asserted.
+    """
+    vectorizer = CountVectorizer(stop_words="english", min_df=PRIORITY_DEF_MIN_DF)
+    X = vectorizer.fit_transform(train["text"])
+    vocab = vectorizer.get_feature_names_out()
+    total_counts = np.asarray(X.sum(axis=0)).ravel()
+
+    definitions = {}
+    top_words = {}
+    for value in sorted(train["priority"].unique()):
+        in_mask = (train["priority"] == value).to_numpy()
+        in_counts = np.asarray(X[in_mask].sum(axis=0)).ravel()
+        out_counts = total_counts - in_counts
+        in_total, out_total = in_counts.sum(), out_counts.sum()
+        rate_in = (in_counts + 1) / (in_total + len(vocab))
+        rate_out = (out_counts + 1) / (out_total + len(vocab))
+        score = rate_in / rate_out
+
+        in_doc_freq = np.asarray((X[in_mask] > 0).sum(axis=0)).ravel()
+        eligible = in_doc_freq >= PRIORITY_DEF_MIN_DF
+        ranked = np.argsort(-np.where(eligible, score, -np.inf))[:PRIORITY_DEF_TOP_N]
+        words = [vocab[i] for i in ranked if eligible[i]]
+
+        top_words[value] = words
+        definitions[value] = (
+            f"Training tickets labeled `{value}` priority are, by relative word frequency "
+            f"against the other two priority values (words appearing in at least "
+            f"{PRIORITY_DEF_MIN_DF} `{value}`-priority tickets), most distinguished by: "
+            f"{', '.join(words)}."
+        )
+    return definitions, top_words
+
+
+def build_initial_messages(ticket_text: str, label_map: dict,
+                            few_shot_examples: list[dict] | None = None,
+                            priority_definitions: dict | None = None) -> list[dict]:
+    system_parts = [
         "You are a support-ticket routing classifier. Given a ticket's text, respond with "
         "ONLY a single JSON object with exactly these three keys: queue, priority, type. "
         "No other text, no explanation, no markdown code fences -- just the raw JSON object.\n\n"
         f"queue must be exactly one of: {json.dumps(label_map['queue'])}\n"
         f"priority must be exactly one of: {json.dumps(label_map['priority'])}\n"
         f"type must be exactly one of: {json.dumps(label_map['type'])}"
-    )
-    user = f"Ticket:\n{ticket_text}"
-    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    ]
+    if priority_definitions:
+        defs = "\n".join(f"- {priority_definitions[v]}" for v in sorted(priority_definitions))
+        system_parts.append(
+            "Empirical guidance on `priority`, derived from the training data (see the sign-off "
+            f"note in the codebase for the exact method):\n{defs}"
+        )
+    messages = [{"role": "system", "content": "\n\n".join(system_parts)}]
+
+    if few_shot_examples:
+        for ex in few_shot_examples:
+            messages.append({"role": "user", "content": f"Ticket:\n{ex['text']}"})
+            messages.append({"role": "assistant", "content": json.dumps(
+                {"queue": ex["queue"], "priority": ex["priority"], "type": ex["type"]}
+            )})
+
+    messages.append({"role": "user", "content": f"Ticket:\n{ticket_text}"})
+    return messages
 
 
 def cache_key_for(model: str, messages: list[dict], ticket_id: str, use_structured: bool) -> str:
@@ -165,9 +263,11 @@ def call_with_cache(client: OpenAI, model: str, messages: list[dict], ticket_id:
 
 
 def process_ticket(client: OpenAI, ticket_id: str, ticket_text: str, model: str,
-                    schema_dict: dict, label_map: dict, run_state: dict) -> tuple[dict, bool]:
+                    schema_dict: dict, label_map: dict, run_state: dict,
+                    few_shot_examples: list[dict] | None = None,
+                    priority_definitions: dict | None = None) -> tuple[dict, bool]:
     """Returns (jsonl_row, was_fully_cached)."""
-    messages = build_initial_messages(ticket_text, label_map)
+    messages = build_initial_messages(ticket_text, label_map, few_shot_examples, priority_definitions)
     total_latency_ms = 0.0
     total_input_tokens = 0
     total_output_tokens = 0
@@ -319,6 +419,12 @@ def main() -> None:
     parser.add_argument("--run-name", help="Required unless --smoke-test")
     parser.add_argument("--output", type=Path, default=None,
                          help="Defaults to results/<run-name>.predictions.jsonl")
+    parser.add_argument("--variant", choices=["zero-shot", "coverage", "coverage-priority"],
+                         default="zero-shot",
+                         help="zero-shot (default, step-04 behavior, unchanged); coverage "
+                              "(step-05 Variant A: 10 few-shot examples, one per queue class); "
+                              "coverage-priority (step-05 Variant B: coverage + data-derived "
+                              "per-priority-value descriptions in the prompt)")
     args = parser.parse_args()
 
     if args.smoke_test:
@@ -342,11 +448,40 @@ def main() -> None:
     label_map = load_label_map()
     schema_dict = build_ticket_schema_dict()
 
+    few_shot_examples = None
+    priority_definitions = None
+    if args.variant in ("coverage", "coverage-priority"):
+        train_path = PROCESSED_DIR / "train.parquet"
+        if not train_path.exists():
+            print(f"STOP: {train_path} not found. Run make_dataset.py first.")
+            raise SystemExit(1)
+        train = pd.read_parquet(train_path)
+
+        few_shot_examples = select_few_shot_examples(train)
+        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        FEW_SHOT_EXAMPLES_PATH.write_text(
+            json.dumps(few_shot_examples, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"Variant '{args.variant}': {len(few_shot_examples)} few-shot examples "
+              f"(one per queue class, shortest-text rule) -- wrote {FEW_SHOT_EXAMPLES_PATH}")
+
+        if args.variant == "coverage-priority":
+            priority_definitions, top_words = derive_priority_definitions(train)
+            PRIORITY_DEFINITIONS_PATH.write_text(
+                json.dumps({"definitions": priority_definitions, "top_words": top_words},
+                           indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            print(f"Derived priority definitions -- wrote {PRIORITY_DEFINITIONS_PATH}")
+            for value, sentence in sorted(priority_definitions.items()):
+                print(f"  {value}: {sentence}")
+
     output_path = args.output or (RESULTS_DIR / f"{args.run_name}.predictions.jsonl")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    print(f"Split: {args.split}  |  Rows: {len(df)}  |  Concurrency: {CONCURRENCY_LIMIT}")
+    print(f"\nSplit: {args.split}  |  Rows: {len(df)}  |  Concurrency: {CONCURRENCY_LIMIT}  "
+          f"|  Variant: {args.variant}")
     print(f"Output: {output_path}")
     print(f"Cache dir: {CACHE_DIR}\n")
     print("NOTE: cost_usd is null for every row -- OpenAI's API does not return a live $ cost. "
@@ -361,7 +496,8 @@ def main() -> None:
          ThreadPoolExecutor(max_workers=CONCURRENCY_LIMIT) as executor:
         futures = {
             executor.submit(
-                process_ticket, client, row.id, row.text, model, schema_dict, label_map, run_state
+                process_ticket, client, row.id, row.text, model, schema_dict, label_map, run_state,
+                few_shot_examples, priority_definitions
             ): row.id
             for row in df.itertuples()
         }
