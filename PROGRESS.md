@@ -492,4 +492,58 @@ scikit-learn here is the straightforward choice.
 Deterministic given `random_state=42` and the fixed train/test parquet files -- no `.env`, no
 network call, no cost.
 
+## step-04c: TF-IDF near-duplicate leakage check
+
+**What was built:** `src/ticket_router/leakage_check.py`, writing `reports/leakage_check.md`.
+Reuses `tfidf_baseline.py`'s exact `TFIDF_CONFIG` (imported, not re-typed, so the two can't drift
+apart) to fit TF-IDF on train text and compute, for every one of the 1,633 test rows, its maximum
+cosine similarity against all 13,070 train rows. Recomputes macro-F1 from the already-saved
+`results/tfidf-baseline.predictions.jsonl` (no retraining) restricted to the subset below a 0.90
+similarity threshold, reusing `metrics.field_metrics` (step-03) rather than duplicating scoring
+logic.
+
+**Why:** step-02 already ruled out *exact*-duplicate rows across splits (dedup on `text` before
+splitting), but synthetic, template-generated tickets can be near-identical paraphrases without
+being byte-identical -- exact-dedup can't catch that, and it would let a model "cheat" by
+memorizing a near-twin instead of generalizing. A strong result on synthetic data (step-04b's TF-IDF
+beating a zero-shot LLM on all three fields) deserved this check before being used to draw
+conclusions.
+
+**Results:**
+- Max-similarity distribution (each test row vs. its closest train row): min 0.1650, median 0.6539,
+  p90 0.8721, p95 0.9016, max 1.0000.
+- Rows exceeding threshold: **88/1,633 (5.39%)** above 0.90, **18 (1.10%)** above 0.95, **5 (0.31%)**
+  above 0.99.
+- The 5 similarity=1.0000 pairs are **real, confirmed near-duplicate leakage** -- read in full in
+  the report -- paraphrases from what looks like the same generation template, e.g. test
+  `tkt_004641` / train `tkt_001231`: *"...best practices for securing medical data **within**
+  healthcare environments..."* vs *"...best practices for securing medical data **in** healthcare
+  environments..."*, otherwise word-for-word identical. This is genuine evidence the leakage
+  mechanism the check was built to catch is real in this dataset, not just hypothetical.
+- **The number that decides everything**: macro-F1 recomputed on only the 1,545/1,633 (94.61%) test
+  rows below the 0.90 threshold:
+
+| field | macro-F1 (all 1,633) | macro-F1 (1,545 low-similarity only) | random-baseline (reference) |
+|---|---|---|---|
+| queue | 0.3683 | 0.3558 | 0.1110 |
+| priority | 0.5445 | 0.5316 | 0.3427 |
+| type | 0.8412 | 0.8325 | 0.2577 |
+
+**Verdict: the result is real, not leakage.** All three fields drop only slightly (1-3.4%
+relative) when the 88 highest-similarity rows are excluded, and stay far above the random-baseline
+reference throughout. The near-duplicate leakage that exists in this dataset is real but small
+(5.39% of test rows) and does not drive step-04b's headline numbers -- TF-IDF beating the zero-shot
+LLM on all three fields is genuine signal, and that comparison stands.
+
+**Files added:** `src/ticket_router/leakage_check.py`, `reports/leakage_check.md`. No other files
+changed -- read-only analysis over already-saved predictions and parquet files, no retraining, no
+new dependency (reuses `scikit-learn` from step-04b).
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\leakage_check.py
+```
+Deterministic (same fixed TF-IDF config, same fixed parquet files); requires
+`results/tfidf-baseline.predictions.jsonl` to already exist (from step-04b).
+
 **Next step:** step-05 — not started yet (to be defined).
