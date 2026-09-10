@@ -723,4 +723,66 @@ Variant C), `results/api-gpt4o-mini-fewshot-coverage.predictions.jsonl` and
 
 **Stopped after Variant C, as instructed -- this was the last prompting attempt.**
 
-**Next step:** step-06 — not started yet (to be defined).
+## step-06: convert processed splits to instruction-tuning (SFT) format
+
+**What was built:** `src/ticket_router/make_sft_dataset.py`, reading `data/processed/{train,val,test}.parquet`
++ `label_map.json` and writing `data/processed/sft/{train,val,test}.jsonl` in OpenAI's fine-tuning
+JSONL format (`{"messages": [...]}` per line, directly usable as
+`client.fine_tuning.jobs.create(training_file=...)` input, no further conversion needed).
+
+**Each example:**
+- **system** (identical across all examples): states the task and lists every allowed value per
+  field, sourced from `label_map.json` -- same single source of truth used by `schema.py` and
+  `api_predictor.py` throughout the project.
+- **user**: the ticket's `text` column, verbatim.
+- **assistant**: **minified** JSON (`json.dumps(..., separators=(",", ":"))`, no whitespace) with
+  keys in the **fixed order `queue, priority, type`** -- the same order used everywhere else in the
+  codebase (`schema.py`'s `TicketLabels`, `metrics.py`'s `TARGET_FIELDS`).
+
+Validated all 3 output files line-by-line after writing: every line is valid JSON, exactly 3 messages
+with the right roles in order, and the assistant JSON has exactly the 3 expected keys in the exact
+expected order -- 13,070 + 1,635 + 1,633 = 16,338 lines, zero exceptions.
+
+**Tokenizer / model, read from config (flagged assumption):** `.env`'s `OPENAI_MODEL` (`gpt-4o-mini`)
+-- the only model config this project has; no separate fine-tuning-specific config exists yet, so
+this was the natural, lowest-risk choice, but it's an assumption worth surfacing explicitly in case
+a different model is the actual fine-tuning target. Token counts use `tiktoken.encoding_for_model()`
+(-> `o200k_base` for this model) with OpenAI's published per-message chat-overhead formula
+(`num_tokens_from_messages()`, from the openai-cookbook token-counting notebook), not a raw
+`encode()` of the concatenated text -- the chat wrapper itself costs a few tokens per message, and
+that's what actually counts against a real max_seq_len during fine-tuning.
+
+**Train token-length distribution** (13,070 examples, full system+user+assistant per example):
+min=165, p50=232, **p95=274**, p99=287, max=373. Histogram (20 buckets) printed by the script; heavy
+mass in the 165-275 range, a short right tail out to 373.
+
+**Recommended `max_seq_len`: 288** (p95=274, rounded up to the nearest 32).
+
+**Truncation counts at max_seq_len=288:**
+
+| split | truncated | total | pct |
+|---|---|---|---|
+| train | 107 | 13,070 | 0.82% |
+| val | 11 | 1,635 | 0.67% |
+| test | 13 | 1,633 | 0.80% |
+
+**Files added:** `src/ticket_router/make_sft_dataset.py`, `reports/sft_samples.md` (5 full worked
+examples: system message once, then per-example user/assistant turns, gold-label crosscheck, and
+the raw JSONL line, plus the token-length summary). `data/processed/sft/*.jsonl` are gitignored
+(regenerable from the parquet files + label_map.json, same convention as the parquet splits
+themselves -- sizeable: train.jsonl is 16MB). **Files changed:** `requirements.txt` (`tiktoken`).
+
+**Dependency added:** `tiktoken==0.14.0` -- OpenAI's official tokenizer, needed to get exact token
+counts matching how OpenAI will actually tokenize the fine-tuning model (no reasonable hand-rolled
+substitute for a BPE tokenizer's exact vocabulary/merges).
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\make_sft_dataset.py
+```
+Deterministic given the fixed parquet files, `label_map.json`, and `.env`'s `OPENAI_MODEL`. No
+network call, no cost.
+
+**Did not start training, as instructed.**
+
+**Next step:** step-07 — not started yet (to be defined).
