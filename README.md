@@ -16,3 +16,12 @@ TODO: one-line description.
 | api-gpt4o-mini-fewshot-coverage-median | test | 1633 | 9.06% | 0.00% | 27.99% | 0.2399 | 44.09% | 0.3330 | 66.87% | 0.6687 | 980.63 | 27627.84 | 0.0000 | 0.0000 |
 
 <!-- RESULTS_TABLE_END -->
+
+## Next steps
+
+- **Fine-tuning a hosted API model (e.g. OpenAI's `gpt-4o-mini` fine-tuning) was considered and
+  deliberately not done.** The fine-tuning target is instead an open-weights 1-3B instruct model
+  (`Qwen/Qwen2.5-1.5B-Instruct` by default -- see `FT_BASE_MODEL` in `.env.example`), QLoRA
+  fine-tuned on Colab, so it can be self-hosted, quantized, and served in Docker in later steps.
+  Fine-tuning a hosted API model instead would make those later steps meaningless and would kill
+  the self-hosted-vs-API cost comparison this project is built around.

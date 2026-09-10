@@ -785,4 +785,111 @@ network call, no cost.
 
 **Did not start training, as instructed.**
 
+## Correction (post step-06): fine-tuning target was wrong
+
+Step-06 originally used `.env`'s `OPENAI_MODEL` (`gpt-4o-mini`) and `tiktoken` for the token-length
+analysis, on the assumption that the fine-tuning target was an OpenAI-hosted model. **Wrong**: the
+actual target is an **open-weights 1-3B instruct model, QLoRA fine-tuned on Colab, self-hosted and
+served in Docker in later steps** -- fine-tuning `gpt-4o-mini` through the API would make those
+later steps meaningless and would kill the self-hosted-vs-API cost comparison this project is built
+around. Corrected in four parts, in the order given.
+
+### 1. Fine-tuning target as its own config
+
+Added `FT_BASE_MODEL` to `.env`/`.env.example` -- a **separate** setting from `OPENAI_MODEL` (which
+stays as-is, used only by `api_predictor.py`'s hosted zero-shot/few-shot baselines). Defaults to
+**`Qwen/Qwen2.5-1.5B-Instruct`** in code if left blank in `.env` (unlike `OPENAI_MODEL`, which has
+no default and must be set). **Confirmed publicly downloadable, not gated**, before picking it:
+queried the HF API (`GET /api/models/Qwen/Qwen2.5-1.5B-Instruct`) -- `"gated": false, "private":
+false`, license `apache-2.0`.
+
+### 2. Token-length analysis redone with the target model's own tokenizer
+
+`tiktoken` (OpenAI) does not describe how `Qwen/Qwen2.5-1.5B-Instruct` tokenizes anything --
+different vocabulary, different chat template. Switched the primary analysis to `transformers`'
+`AutoTokenizer.from_pretrained(FT_BASE_MODEL)` + `apply_chat_template(tokenize=True)` (the target
+model's real chat template, applied the same way training will). **Real bug caught during manual
+testing before it shipped**: `apply_chat_template(tokenize=True)` returns a `BatchEncoding` dict by
+default, and `len()` on that returns the number of *keys* (`input_ids`, `attention_mask` -> 2), not
+the token count -- silently wrong by two orders of magnitude. Fixed with `return_dict=False`, which
+returns the plain token-id list `len()` actually needs to describe.
+
+No torch install needed -- tokenizer/chat-template loading only, no model weights (this step still
+does not start training).
+
+**Side-by-side comparison, train split, full system+user+assistant per example** (both computed on
+identical prompt content -- only the tokenizer differs):
+
+| model | p50 | p95 | p99 | max |
+|---|---|---|---|---|
+| **Qwen/Qwen2.5-1.5B-Instruct (target, used below)** | 236 | **277** | 290 | 377 |
+| gpt-4o-mini via tiktoken (comparison only, step-06's original error) | 232 | 274 | 287 | 373 |
+
+Qwen's tokenizer runs consistently a little longer than OpenAI's `o200k_base` on this content (a few
+tokens at every percentile) -- close, but a real, visible difference, not identical tokenizers
+coincidentally agreeing.
+
+**New recommendation: `max_seq_len = 288`** (Qwen p95=277, rounded up to the nearest 32 -- this
+happens to round to the same number as the old, wrong analysis's 274; the underlying p95 values are
+genuinely different, the post-rounding number is a coincidence, not evidence the fix didn't matter).
+
+**New truncation counts at max_seq_len=288 (target-model tokenizer):**
+
+| split | truncated | total | pct |
+|---|---|---|---|
+| train | 144 | 13,070 | 1.10% |
+| val | 15 | 1,635 | 0.92% |
+| test | 17 | 1,633 | 1.04% |
+
+(Previously reported, wrong-tokenizer counts: 107/13,070, 11/1,635, 13/1,633 -- all slightly lower,
+consistent with Qwen's slightly longer token counts.)
+
+### 3. Chat-format JSONL: already message-list, not pre-rendered -- confirmed, not changed
+
+Checked directly: every line is `{"messages": [{"role": ..., "content": ...}, ...]}` -- a structured
+list of role/content dicts, never a pre-rendered/pre-templated string. This was already correct and
+tokenizer-agnostic; nothing needed to change structurally. What *did* need to change was the
+docstring/framing, which previously described the file as "OpenAI's fine-tuning JSONL format ...
+directly usable as `client.fine_tuning.jobs.create(...)` input" -- misleading now. Reframed as a
+provider-agnostic chat-messages format meant for `tokenizer.apply_chat_template()` at training time,
+using whichever model actually gets fine-tuned.
+
+### 4. Docs updated to state the target model explicitly
+
+- `reports/sft_samples.md`: states `Qwen/Qwen2.5-1.5B-Instruct` as the fine-tuning target up top;
+  every sample's token count is now from Qwen's tokenizer (labelled as such); added, for the first
+  sample only, what Qwen's chat template actually renders the message list to at training time
+  (`<|im_start|>system\n...<|im_end|>\n...`) -- clearly marked as reference-only, not what's stored
+  in the JSONL; token-length summary section now shows target-model numbers as primary and the
+  OpenAI/tiktoken numbers as an explicitly-labelled comparison underneath.
+- `README.md`: added a **"Next steps"** section (outside `report.py`'s auto-generated markers, so
+  regeneration doesn't wipe it) stating plainly that fine-tuning a hosted API model was considered
+  and deliberately not done, and why.
+- This file: step-06's original entry left as-is above (not rewritten), this correction section
+  added after it -- same pattern as the step-02 and step-04/05 corrections earlier in this file.
+
+**Dependencies added:** `transformers==5.17.0` (`AutoTokenizer` for the target model's real
+tokenizer + chat template -- no torch needed, tokenizer/config loading only) and `jinja2==3.1.6`
+(required by `transformers.apply_chat_template()` to render the target model's Jinja2 chat
+template). `tiktoken` is kept, now justified only as the comparison-only tokenizer, not the
+recommendation source.
+
+**Files changed:** `src/ticket_router/make_sft_dataset.py` (rewritten: `FT_BASE_MODEL` config,
+target-model tokenizer as the primary/only source for the recommendation, tiktoken kept for
+comparison only, samples report shows the target model explicitly), `.env.example`
+(`FT_BASE_MODEL`), `requirements.txt` (`transformers`, `jinja2`), `reports/sft_samples.md`
+(regenerated), `README.md` (added "Next steps"), `data/processed/sft/*.jsonl` (regenerated with
+corrected content -- still gitignored, same as before).
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\make_sft_dataset.py
+```
+Requires network access to download `Qwen/Qwen2.5-1.5B-Instruct`'s tokenizer files from Hugging
+Face on first run (cached locally afterward, standard HF cache location). `OPENAI_MODEL` in `.env`
+is optional now for this script -- used only for the side-by-side comparison if present, skipped
+gracefully (not a STOP) if absent.
+
+**Still did not start training.**
+
 **Next step:** step-07 — not started yet (to be defined).
