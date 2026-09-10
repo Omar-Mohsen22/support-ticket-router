@@ -209,6 +209,10 @@ def main() -> None:
     parser.add_argument("--predictions", required=True, type=lambda p: Path(p).resolve(),
                          help="Path to a predictions JSONL file")
     parser.add_argument("--split", required=True, choices=["train", "val", "test"], help="Gold split to score against")
+    parser.add_argument("--limit", type=int, default=None,
+                         help="Score against only the first N rows of the split (must match the "
+                              "--limit a predictor used, e.g. predictors/api_predictor.py, so gold "
+                              "and predictions cover the same rows -- omit for the full split)")
     parser.add_argument("--run-name", required=True, help="Key this run is stored under in results/results.json")
     args = parser.parse_args()
 
@@ -222,7 +226,10 @@ def main() -> None:
         raise SystemExit(1)
 
     gold = pd.read_parquet(gold_path)
-    print(f"Loaded {len(gold)} gold rows from {gold_path.name}")
+    if args.limit is not None:
+        gold = gold.head(args.limit)
+    print(f"Loaded {len(gold)} gold rows from {gold_path.name}"
+          + (f" (limited to first {args.limit})" if args.limit is not None else ""))
 
     labels_by_id, numeric_by_id = load_predictions(args.predictions)
     result = evaluate(gold, labels_by_id, numeric_by_id)

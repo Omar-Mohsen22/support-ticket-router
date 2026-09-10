@@ -6,8 +6,9 @@ downloaded in step 01 are excluded.
 
 Pipeline: English-only filter -> row-count-per-queue sanity gate -> build
 `text` from subject+body -> drop rows with empty body / null targets ->
-drop exact-duplicate `text` rows -> stratified 80/10/10 split on `queue`
--> write data/processed/{train,val,test}.parquet, data/processed/label_map.json,
+drop exact-duplicate `text` rows -> stratified 80/10/10 split on `queue` ->
+shuffle row order within each split (membership unchanged) -> write
+data/processed/{train,val,test}.parquet, data/processed/label_map.json,
 and data/README.md.
 
 Run from the repo root:
@@ -238,6 +239,23 @@ def main() -> None:
     assert len(all_ids) == n_final, "some rows were lost or duplicated across splits"
     print("\nAssertion passed: no id appears in more than one split.")
 
+    # --- Shuffle row order WITHIN each split ------------------------------------
+    # stratified_split() builds each split by concatenating one queue class's
+    # rows after another (see its loop over `sorted(df[stratify_col].unique())`),
+    # so before this step a split's row order is grouped by class -- the first
+    # N rows of a split are a SLICE of one class, not a representative sample.
+    # This is invisible to anything that reads a whole split, but it is a trap
+    # for any later step that takes df.head(n) expecting a random subset (as
+    # the step-04 zero-shot baseline's first 50-row run did, entirely by
+    # accident, on 50 rows that turned out to be 100% one queue class).
+    # Fixed at the source here: shuffle each split's row order (membership is
+    # untouched -- .sample(frac=1) returns every row of that split, just
+    # reordered) with the same fixed SPLIT_SEED, applied fresh per split so
+    # the result does not depend on dict iteration order.
+    for name in splits:
+        splits[name] = splits[name].sample(frac=1, random_state=np.random.default_rng(SPLIT_SEED))
+    print("Shuffled row order within each split (membership unchanged) using SPLIT_SEED.")
+
     # --- Save parquet files ----------------------------------------------------
     OUTPUT_COLUMNS = ["id", "subject", "body", "text", "has_subject", "language",
                        "queue", "priority", "type"]
@@ -349,13 +367,21 @@ def build_data_readme(*, n_raw, n_english, queue_counts_en, n_body_missing, n_ta
         "disproportionately in one split by chance.\n"
     )
     lines.append(
-        "8. **Stable `id`**: assigned from each row's position in the raw source CSV "
+        "8. **Row order shuffled within each split** (membership unchanged): building a split by "
+        "concatenating one queue class's rows after another leaves each split grouped by class, so "
+        "`df.head(n)` on a split is a slice of one class, not a sample of the split. Fixed at the "
+        f"source with `.sample(frac=1, random_state=...)` per split, seeded from `SPLIT_SEED = "
+        f"{SPLIT_SEED}` fresh for each split (independent of dict iteration order). Which split an "
+        "id belongs to is exactly the same as before this step -- only row order changes.\n"
+    )
+    lines.append(
+        "9. **Stable `id`**: assigned from each row's position in the raw source CSV "
         "(`tkt_000000`, `tkt_000001`, ...) before any filtering, so an id always traces back to the "
         "same source row across re-runs. Verified programmatically that no id appears in more than "
         "one split.\n"
     )
     lines.append(
-        "9. **Columns kept in the output**: `id`, `subject`, `body`, `text`, `has_subject`, "
+        "10. **Columns kept in the output**: `id`, `subject`, `body`, `text`, `has_subject`, "
         "`language`, `queue`, `priority`, `type`. The source file's `answer`, `version`, and "
         "`tag_1..tag_8` columns are dropped -- they are not needed for the queue/priority/type "
         "routing targets this dataset is built for.\n"

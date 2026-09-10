@@ -32,5 +32,8 @@ data/processed/*
 # Secrets
 .env
 
+# step-04: cached raw API responses (regenerable, and can grow large)
+.cache/
+
 # Local model weights
 *.gguf

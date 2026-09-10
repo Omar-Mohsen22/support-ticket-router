@@ -29,9 +29,11 @@ Only `data/raw/aa_dataset-tickets-multi-lang-5-2-50-version.csv` (28587 rows) is
 
 7. **Stratified split**: 80/10/10 train/val/test, stratified on `queue`, fixed seed `42`. Splitting is done independently within each queue class so every class keeps its ~80/10/10 proportions in every split, rather than risking a class landing disproportionately in one split by chance.
 
-8. **Stable `id`**: assigned from each row's position in the raw source CSV (`tkt_000000`, `tkt_000001`, ...) before any filtering, so an id always traces back to the same source row across re-runs. Verified programmatically that no id appears in more than one split.
+8. **Row order shuffled within each split** (membership unchanged): building a split by concatenating one queue class's rows after another leaves each split grouped by class, so `df.head(n)` on a split is a slice of one class, not a sample of the split. Fixed at the source with `.sample(frac=1, random_state=...)` per split, seeded from `SPLIT_SEED = 42` fresh for each split (independent of dict iteration order). Which split an id belongs to is exactly the same as before this step -- only row order changes.
 
-9. **Columns kept in the output**: `id`, `subject`, `body`, `text`, `has_subject`, `language`, `queue`, `priority`, `type`. The source file's `answer`, `version`, and `tag_1..tag_8` columns are dropped -- they are not needed for the queue/priority/type routing targets this dataset is built for.
+9. **Stable `id`**: assigned from each row's position in the raw source CSV (`tkt_000000`, `tkt_000001`, ...) before any filtering, so an id always traces back to the same source row across re-runs. Verified programmatically that no id appears in more than one split.
+
+10. **Columns kept in the output**: `id`, `subject`, `body`, `text`, `has_subject`, `language`, `queue`, `priority`, `type`. The source file's `answer`, `version`, and `tag_1..tag_8` columns are dropped -- they are not needed for the queue/priority/type routing targets this dataset is built for.
 
 ## Row counts per split
 

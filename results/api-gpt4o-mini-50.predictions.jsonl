@@ -1,0 +1,50 @@
+{"id": "tkt_006784", "queue": "Technical Support", "priority": "medium", "type": "Request", "latency_ms": 1863.945999997668, "input_tokens": 326, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_008474", "queue": "Billing and Payments", "priority": "medium", "type": "Request", "latency_ms": 1843.373399999109, "input_tokens": 396, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_025143", "queue": "Sales and Pre-Sales", "priority": "medium", "type": "Request", "latency_ms": 1838.5087999995449, "input_tokens": 362, "output_tokens": 17, "cost_usd": null}
+{"id": "tkt_012570", "queue": "Billing and Payments", "priority": "medium", "type": "Request", "latency_ms": 1834.9103000000468, "input_tokens": 394, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_012042", "queue": "Sales and Pre-Sales", "priority": "medium", "type": "Request", "latency_ms": 2774.1045000002487, "input_tokens": 369, "output_tokens": 17, "cost_usd": null}
+{"id": "tkt_024807", "queue": "Sales and Pre-Sales", "priority": "medium", "type": "Request", "latency_ms": 1247.8990999989037, "input_tokens": 346, "output_tokens": 17, "cost_usd": null}
+{"id": "tkt_007927", "queue": "Billing and Payments", "priority": "high", "type": "Incident", "latency_ms": 640.0152999995044, "input_tokens": 360, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_012168", "queue": "Technical Support", "priority": "medium", "type": "Request", "latency_ms": 1125.1559000011184, "input_tokens": 332, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_022030", "queue": "Sales and Pre-Sales", "priority": "medium", "type": "Request", "latency_ms": 612.6635999971768, "input_tokens": 397, "output_tokens": 17, "cost_usd": null}
+{"id": "tkt_008767", "queue": "IT Support", "priority": "medium", "type": "Request", "latency_ms": 598.6062000010861, "input_tokens": 372, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_015076", "queue": "General Inquiry", "priority": "medium", "type": "Request", "latency_ms": 599.204500002088, "input_tokens": 319, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_024818", "queue": "IT Support", "priority": "high", "type": "Incident", "latency_ms": 1176.6283000033582, "input_tokens": 398, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_001516", "queue": "Billing and Payments", "priority": "medium", "type": "Request", "latency_ms": 648.6869999971532, "input_tokens": 390, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_025764", "queue": "Technical Support", "priority": "high", "type": "Request", "latency_ms": 695.17629999973, "input_tokens": 405, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_027855", "queue": "Billing and Payments", "priority": "medium", "type": "Request", "latency_ms": 560.3567999969528, "input_tokens": 387, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_015959", "queue": "Product Support", "priority": "medium", "type": "Request", "latency_ms": 651.9747000020288, "input_tokens": 318, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_024154", "queue": "Billing and Payments", "priority": "high", "type": "Change", "latency_ms": 684.6876999989036, "input_tokens": 332, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_005740", "queue": "Technical Support", "priority": "high", "type": "Incident", "latency_ms": 642.4661999990349, "input_tokens": 364, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_019240", "queue": "Billing and Payments", "priority": "high", "type": "Problem", "latency_ms": 633.9735000001383, "input_tokens": 385, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_008691", "queue": "Billing and Payments", "priority": "medium", "type": "Request", "latency_ms": 666.325300000608, "input_tokens": 375, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_001924", "queue": "IT Support", "priority": "high", "type": "Incident", "latency_ms": 702.165700000478, "input_tokens": 324, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_013637", "queue": "Billing and Payments", "priority": "medium", "type": "Request", "latency_ms": 772.2837000001164, "input_tokens": 381, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_020436", "queue": "Billing and Payments", "priority": "high", "type": "Problem", "latency_ms": 692.796700001054, "input_tokens": 388, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_016159", "queue": "Billing and Payments", "priority": "high", "type": "Change", "latency_ms": 645.8492999990995, "input_tokens": 324, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_022930", "queue": "General Inquiry", "priority": "medium", "type": "Request", "latency_ms": 699.7348999975657, "input_tokens": 329, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_010491", "queue": "Billing and Payments", "priority": "high", "type": "Request", "latency_ms": 654.6166000007361, "input_tokens": 409, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_001876", "queue": "Billing and Payments", "priority": "high", "type": "Incident", "latency_ms": 642.8765999989992, "input_tokens": 346, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_025306", "queue": "Sales and Pre-Sales", "priority": "medium", "type": "Request", "latency_ms": 646.7147999974259, "input_tokens": 345, "output_tokens": 17, "cost_usd": null}
+{"id": "tkt_013767", "queue": "Customer Service", "priority": "medium", "type": "Request", "latency_ms": 694.8293999994348, "input_tokens": 380, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_025096", "queue": "Customer Service", "priority": "medium", "type": "Request", "latency_ms": 833.9401000012003, "input_tokens": 358, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_017596", "queue": "Sales and Pre-Sales", "priority": "medium", "type": "Request", "latency_ms": 682.0114000001922, "input_tokens": 410, "output_tokens": 17, "cost_usd": null}
+{"id": "tkt_026490", "queue": "Sales and Pre-Sales", "priority": "medium", "type": "Request", "latency_ms": 673.8374999986263, "input_tokens": 397, "output_tokens": 17, "cost_usd": null}
+{"id": "tkt_024227", "queue": "Billing and Payments", "priority": "high", "type": "Problem", "latency_ms": 754.8891999977059, "input_tokens": 415, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_021488", "queue": "Billing and Payments", "priority": "high", "type": "Problem", "latency_ms": 779.2239999980666, "input_tokens": 395, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_004940", "queue": "Billing and Payments", "priority": "high", "type": "Problem", "latency_ms": 640.068099997734, "input_tokens": 323, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_006297", "queue": "Billing and Payments", "priority": "high", "type": "Incident", "latency_ms": 625.1957999993465, "input_tokens": 378, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_026272", "queue": "General Inquiry", "priority": "medium", "type": "Request", "latency_ms": 687.2373000005609, "input_tokens": 369, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_021442", "queue": "Technical Support", "priority": "high", "type": "Incident", "latency_ms": 881.5054000006057, "input_tokens": 355, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_000812", "queue": "Billing and Payments", "priority": "high", "type": "Problem", "latency_ms": 645.4827000015939, "input_tokens": 421, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_017335", "queue": "Billing and Payments", "priority": "high", "type": "Problem", "latency_ms": 577.2263000035309, "input_tokens": 367, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_003286", "queue": "IT Support", "priority": "high", "type": "Incident", "latency_ms": 847.475000002305, "input_tokens": 337, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_025386", "queue": "General Inquiry", "priority": "medium", "type": "Request", "latency_ms": 662.0031999991625, "input_tokens": 346, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_010390", "queue": "Billing and Payments", "priority": "medium", "type": "Request", "latency_ms": 642.7656000014395, "input_tokens": 412, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_013794", "queue": "Technical Support", "priority": "high", "type": "Problem", "latency_ms": 733.5170000005746, "input_tokens": 411, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_019871", "queue": "Technical Support", "priority": "medium", "type": "Request", "latency_ms": 805.2623000003223, "input_tokens": 407, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_008480", "queue": "Technical Support", "priority": "high", "type": "Incident", "latency_ms": 582.59420000104, "input_tokens": 388, "output_tokens": 14, "cost_usd": null}
+{"id": "tkt_025878", "queue": "Billing and Payments", "priority": "medium", "type": "Request", "latency_ms": 804.567399998632, "input_tokens": 399, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_000088", "queue": "Billing and Payments", "priority": "medium", "type": "Request", "latency_ms": 582.4150000007648, "input_tokens": 413, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_015828", "queue": "Billing and Payments", "priority": "high", "type": "Problem", "latency_ms": 670.5634999998438, "input_tokens": 409, "output_tokens": 15, "cost_usd": null}
+{"id": "tkt_023911", "queue": "Billing and Payments", "priority": "high", "type": "Problem", "latency_ms": 611.3303000020096, "input_tokens": 326, "output_tokens": 15, "cost_usd": null}

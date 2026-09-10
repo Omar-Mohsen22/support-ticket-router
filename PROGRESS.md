@@ -320,4 +320,113 @@ needed). **Files changed:** `requirements.txt` (added `pydantic`, `pytest`).
 .venv\Scripts\python.exe src\ticket_router\report.py
 ```
 
-**Next step:** step-04 — not started yet (to be defined).
+## step-04: zero-shot API baseline (OpenAI, gpt-4o-mini)
+
+**What was built:** `src/ticket_router/predictors/api_predictor.py` — calls the OpenAI API directly
+via the official `openai` SDK (provider-agnostic: `OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL`
+all read from `.env`, `OPENAI_MODEL` never hardcoded). Structured outputs
+(`response_format: json_schema, strict=True`) with a fallback to plain-JSON + `TicketLabels`
+validation if a model/request rejects that parameter. Up to 2 content-validation retries (3
+attempts total) with corrective feedback in the retry prompt; rate-limit/transient-error backoff is
+the SDK's own built-in `max_retries`. Every individual API call is cached to disk
+(`.cache/api_predictor/`, gitignored) keyed by a hash of (model, exact messages, ticket id), so
+re-running the same rows costs nothing. Concurrency capped at 5 threads. A `--smoke-test` mode sends
+one raw, uncached, unretried call and lets any SDK exception propagate uncaught (no fallback model),
+for a clean go/no-go check before spending anything.
+
+**Provider pivot mid-step:** originally built against OpenRouter; switched to calling OpenAI
+directly on request, before any API call was made. `.env.example` and the script were updated
+together so there was never a mix of the two.
+
+**`cost_usd` is `null` in every predictions row, on purpose**: OpenAI's chat completions API does
+not return a live `$` figure (unlike some aggregators). No pricing table is hardcoded in the
+pipeline -- prices drift and a stale guess baked into the codebase is worse than being explicit that
+it's unknown there. `input_tokens`/`output_tokens` are exact and authoritative; $ costs below are
+computed separately (not by the script) from those tokens using gpt-4o-mini's published per-token
+price ($0.15/1M input, $0.60/1M output) -- flagged as an external, verify-before-trusting figure,
+not a harness-tracked one.
+
+**Verification sequence, in order:**
+1. **Smoke test** (`--smoke-test`): first attempt failed with `401 AuthenticationError` -- traced to
+   a stale Windows `OPENAI_API_KEY` environment variable shadowing `.env` (the original loader used
+   `os.environ.setdefault()`, which never overwrites an existing variable). Fixed by switching to
+   `python-dotenv`'s `load_dotenv(dotenv_path=ENV_PATH, override=True)`, so `.env` always wins
+   regardless of ambient environment state, on any machine. Re-ran: passed, structured output
+   confirmed working, masked key (`...jqkA`) printed and confirmed correct before the call.
+2. **50-row proof run** (`--split test --limit 50`): 50/50 valid, 0 failures. Re-ran the identical
+   command a second time: `cached=50, fresh=0` -- proves the cache works (zero API calls on rerun,
+   not an estimate).
+3. **Sampling-trap bug found and fixed at the source**: the 50-row run's gold gave `queue` support
+   of 50 for a single class ("Billing and Payments") -- `make_dataset.py`'s `stratified_split()`
+   concatenates one queue class's rows after another, so a split's row order was grouped by class;
+   `df.head(n)` on a split was a slice of one class, not a sample. **Fixed in `make_dataset.py`**:
+   after the stratified assignment, each split's row order is shuffled (`.sample(frac=1,
+   random_state=np.random.default_rng(SPLIT_SEED))`, fresh per split) -- membership is untouched,
+   only order changes. Documented as new item 8 in `data/README.md`'s "Preprocessing decisions"
+   (items 8-9 renumbered to 9-10).
+4. **Re-ran `make_dataset.py`, verified three things:**
+   - `label_map.json`: `git diff` empty -- unchanged, as expected (shuffling doesn't touch labels).
+   - `data/README.md`: `git diff` **not** empty, but the *only* diff is the new item documenting
+     this shuffle step (row counts and label distributions are byte-identical) -- a deliberate
+     content addition per the data card's own "every preprocessing decision" promise, not drift.
+   - **Id-to-split membership**: compared the full id set per split before vs. after, for all three
+     splits: `added=0, removed=0` on every split -- membership is exactly identical; only file row
+     order changed (confirmed differing "first 5 ids" before/after). This also means the 50 tickets
+     already cached from step 3 remained valid (same ids, just relocated within the file).
+5. **`evaluate.py` gap found and fixed**: it always scored against the *full* gold split, so
+   scoring 50 predictions against 1,633 gold rows would have shown a bogus ~97% invalid rate (1,583
+   "no prediction found" rows). Added an optional `--limit` (default `None` = unchanged behavior for
+   every existing/future full-split call), mirroring the predictor's own `--limit`, so gold and
+   predictions cover identically the same rows.
+6. **Full 1,633-row test-split run** (no `--limit`): 1,633/1,633 valid, 0 failures. 50 of the 1,633
+   calls were free cache hits (the same tickets from step 2/3's proof runs, still valid after the
+   shuffle since membership didn't change).
+
+**Full-split results** (`api-gpt4o-mini-full-test`, gpt-4o-mini, n=1,633):
+
+| field | accuracy | macro-F1 |
+|---|---|---|
+| queue | 33.37% | 0.2554 |
+| priority | 43.54% | 0.3214 |
+| type | 64.18% | 0.5209 |
+
+- exact-match rate (all 3 fields): 10.90%
+- invalid-output rate: 0.00%
+- latency: p50 = 698.54 ms, p95 = 1092.26 ms
+- tokens: 606,199 input + 23,541 output = 629,740 total (371.2 in / 14.4 out per ticket, average)
+- estimated cost (external calc, gpt-4o-mini published pricing): **$0.1051 total**, **$0.0643 per
+  1,000 tickets** -- consistent with the 50-row run's $0.1057 extrapolation, i.e. the projection
+  held even though that 50-row sample was itself label-skewed (a token-count/cost projection isn't
+  sensitive to label distribution the way an accuracy projection would have been).
+- `queue` per-class F1 (full breakdown in `results/comparison.md` and `results/results.json`):
+  strongest on Billing and Payments (0.6967) and Technical Support (0.4724); weakest on General
+  Inquiry (0.0000, 0/24 correct) and Returns and Exchanges (0.0706, 1/82 recall).
+- Beats `random-baseline` on macro-F1 for all three fields (queue 0.2554 vs 0.1110, priority 0.3214
+  vs 0.3427 -- roughly tied, type 0.5209 vs 0.2577), for essentially zero cost.
+
+**Dependencies added:**
+- `openai==3.11.0` -- official SDK for the OpenAI API: auth, structured-output requests, built-in
+  rate-limit backoff (`max_retries=`), instead of hand-rolling HTTP + retry logic.
+- `python-dotenv==1.2.3` -- `load_dotenv(override=True)`, so `.env` always wins over any ambient/
+  stale OS environment variable of the same name, on this machine, CI, or anyone else's.
+
+**Files added:** `src/ticket_router/predictors/__init__.py`, `src/ticket_router/predictors/api_predictor.py`,
+`results/api-gpt4o-mini-50.predictions.jsonl`, `results/api-gpt4o-mini-full-test.predictions.jsonl`.
+**Files changed:** `.env.example` (`OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL` placeholders),
+`.gitignore` (added `.cache/`), `requirements.txt` (`openai`, `python-dotenv`),
+`src/ticket_router/make_dataset.py` (shuffle fix), `data/README.md` (regenerated, documents the
+shuffle), `src/ticket_router/evaluate.py` (`--limit`), `results/results.json`,
+`results/comparison.md` (both regenerated with the new runs).
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe src\ticket_router\predictors\api_predictor.py --smoke-test
+.venv\Scripts\python.exe src\ticket_router\predictors\api_predictor.py --split test --run-name api-gpt4o-mini-full-test
+.venv\Scripts\python.exe src\ticket_router\evaluate.py --predictions results\api-gpt4o-mini-full-test.predictions.jsonl --split test --run-name api-gpt4o-mini-full-test
+.venv\Scripts\python.exe src\ticket_router\report.py
+```
+Requires `OPENAI_API_KEY` and `OPENAI_MODEL` in `.env` (never committed; see `.env.example`). A
+rerun over the same rows replays from `.cache/api_predictor/` and costs nothing.
+
+**Next step:** step-05 — not started yet (to be defined).
