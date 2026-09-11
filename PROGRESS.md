@@ -1252,3 +1252,139 @@ touched). **No dependency added** (`pathlib`, `shutil`, `math`, `glob` are all s
 Still did not run any training, locally or otherwise -- as instructed.
 
 **Next step still step-08 — not started, unchanged by this correction.**
+
+## Correction (post step-07, continued): trl 1.13.0 removed the collator this notebook depended on -- switched to prompt-completion format + `completion_only_loss`
+
+Reported directly from the real Colab environment, not assumed: `trl==1.13.0`,
+`transformers==5.17.0`, `peft==0.20.0`, `torch==2.11.0+cu128`.
+**`trl.DataCollatorForCompletionOnlyLM` no longer exists in trl 1.13.0 -- trl exports no
+collator classes at all in this version.** The masking mechanism the step-07 notebook was
+built around (verified by hand against an *older* trl API, before any of this could be
+tested against a real Colab session -- see the original step-07 entry's own disclaimer about
+that) simply isn't importable any more.
+
+**The obvious replacement was tried and is a trap, not a fix.** `SFTConfig` in this trl
+version exposes `completion_only_loss` and `assistant_only_loss` instead of a collator
+class. `assistant_only_loss` relies on the chat template's own `{% generation %}` markers
+via `apply_chat_template(return_assistant_tokens_mask=True)` -- and Qwen2.5's chat template
+has **no** `{% generation %}` markers, so the returned `assistant_masks` array comes back
+**all zeros**. It does not raise. Used as-is, it would have silently masked every token and
+trained on nothing, with a loss curve that might even look plausible. Confirmed by direct
+probing, not assumed either.
+
+### 1. Dataset format: `make_sft_dataset.py` now emits prompt/completion, not one message list
+
+`src/ticket_router/make_sft_dataset.py`: `build_example()` now returns
+`{"prompt": [system, user], "completion": [assistant]}` -- TRL's conversational
+prompt-completion format -- instead of `{"messages": [system, user, assistant]}`. This is
+what lets `completion_only_loss=True` find the loss boundary from the **data's own explicit
+split** (by tokenized length) rather than from a `response_template` string match against a
+rendered sequence, or from chat-template generation-mask support that Qwen2.5 doesn't have.
+
+Everything downstream of `build_example()` that read `ex["messages"]` was updated to read
+`ex["prompt"]`/`ex["completion"]` instead (`write_samples_report`'s user/assistant text
+extraction, the rendered-chat-template reference sample, and both token-length functions --
+`num_tokens_target`/`num_tokens_openai` -- via a new `full_messages(ex)` helper that just
+concatenates `prompt + completion` back into one list purely for measurement, since the
+**total rendered sequence** -- and therefore whether the assistant's JSON at the end gets
+truncated -- is unaffected by which JSON field the messages are split across).
+
+**Regenerated all three splits** (`.venv\Scripts\python.exe src\ticket_router\make_sft_dataset.py`):
+same numbers as before the format change -- 13,070/1,635/1,633 examples, train token
+lengths min=167/p50=236/p95=277/p99=290/**max=377**, `max_seq_len`=**384** (unchanged, true-max
+based, not a percentile -- see the step-06 correction), **zero truncation on all three
+splits** (0/13070, 0/1635, 0/1633) -- confirms the prompt/completion split doesn't change
+what gets tokenized, only how it's stored. `reports/sft_samples.md` regenerated to match
+(diff is format-only: `{"messages": [...]}` -> `{"prompt": [...], "completion": [...]}` in
+each shown raw JSONL line; token counts and every other section are byte-identical).
+`data/processed/sft/*.jsonl` regenerated (gitignored, same convention as before).
+
+### 2 + 3. Notebook: collator cell replaced with a masking-verification cell that checks CONTENT
+
+`notebooks/train_qlora.ipynb` step 7 ("Verify completion-only masking"): the old cell that
+built `collator = DataCollatorForCompletionOnlyLM(...)` is gone -- no trace of that class or
+of `response_template` remains anywhere as executable code (grepped the raw notebook JSON to
+confirm; the two remaining textual mentions are in markdown/comments explaining what changed
+and why, not code). Masking is now applied purely via
+`SFTConfig(completion_only_loss=config["completion_only_loss"])` in the trainer factory
+(step 10) -- no `data_collator=` argument is passed to `SFTTrainer` at all, in either the
+main trainer factory or the step-14 checkpoint-evaluation helper (both previously passed
+`data_collator=collator`).
+
+**The new verification cell reproduces, by hand, the exact boundary trl 1.13.0 uses for
+`completion_only_loss`**: tokenize the prompt alone with `add_generation_prompt=True`
+(renders through the assistant-start marker -- the exact prefix the full sequence has before
+the assistant's own content begins), tokenize prompt+completion together, and assert the
+prompt-alone ids are an exact prefix of the full sequence. Then -- the part the instruction
+specifically called out as insufficient last time -- it **decodes the unmasked (completion)
+tokens and asserts they equal the gold assistant JSON exactly**
+(`json.loads(decoded) == json.loads(gold)`), not merely that `n_loss > 0`. A check that only
+confirms some tokens are unmasked would NOT have caught the `assistant_only_loss` trap above
+(that mechanism also "returns a mask" -- it's just all zeros); decoding and comparing real
+content is the check that can't be fooled that way. Printed output format matches the
+original step-07 cell's style (per-token idx/token_id/label/token_text table) so the two are
+directly comparable.
+
+**Knock-on fix, not explicitly requested but necessary to keep the notebook working**: step
+8's padding-verification cell also depended on the deleted `collator` object and the old
+`example["messages"]` field name. Rewritten to pad via `tokenizer.pad()` directly (removes
+the trl-collator dependency entirely -- padding behavior is a property of the tokenizer's
+own `.pad()` call, unrelated to which masking mechanism is used) and to tokenize the new
+prompt+completion format. Also updated: `generate_one()` (used by both the smoke-test
+generation cell and the post-train preview cell) took a full `messages` list and sliced
+`messages[:2]` to get the prompt -- now takes `prompt_messages` directly (the dataset's
+`"prompt"` field already excludes the completion, no slicing needed), and both call sites
+read `example["prompt"]`/`example["completion"][0]["content"]` instead of
+`example["messages"][:2]`/`example["messages"][2]["content"]`.
+
+### 4. Exact version pins in the install cell -- and an honest gap where versions weren't verified
+
+`notebooks/train_qlora.ipynb`'s install cell now pins the three versions actually read from
+the Colab session: `transformers==5.17.0`, `trl==1.13.0`, `peft==0.20.0`. `torch` stays
+unpinned on purpose (ships with Colab's image; pinning it risks fighting Colab's own
+CUDA-matched build) -- commented explicitly.
+
+**`accelerate`, `bitsandbytes`, `datasets`, `pyyaml`, and `huggingface_hub` were NOT pinned
+to an exact version.** Their currently-installed versions in the target Colab environment
+were never given or probed -- only trl/transformers/peft/torch were. Inventing exact-looking
+pins for the other five would repeat the precise mistake this correction exists to fix
+(an unverified assumption baked into the notebook, discovered only when it broke). Instead, a
+new cell right after install prints every package's actually-resolved version
+(`importlib.metadata.version(...)`), labeled clearly as pinned-and-confirmed
+(transformers/trl/peft), unpinned-from-Colab's-image (torch), or unpinned-and-unverified
+(the other five) -- so those five can be pinned for real in a follow-up once their versions
+are reported back, rather than guessed now.
+
+### 5. `train/config.yaml`: `response_template` removed, replacement mechanism documented
+
+The "Completion-only loss" section's comment block was rewritten in full: explains that the
+mechanism changed (dataset-format-based `completion_only_loss`, not a `response_template`
+string matched against a `DataCollatorForCompletionOnlyLM`), why the collator approach broke
+(trl 1.13.0 exports none), why `assistant_only_loss` was rejected (Qwen2.5's chat template
+has no `{% generation %}` markers -> silent all-zeros mask), and what verifies it now (the
+notebook's content-checked masking cell, not merely a token-boundary check).
+`response_template: "<|im_start|>assistant\n"` was deleted -- nothing in the notebook reads
+that key any more.
+
+**Files changed:** `src/ticket_router/make_sft_dataset.py`, `train/config.yaml`,
+`notebooks/train_qlora.ipynb`, `reports/sft_samples.md` (regenerated), plus
+`data/processed/sft/*.jsonl` (regenerated, gitignored). **No dependency added** to the local
+pipeline (`pandas`/`transformers`/etc. already installed); the notebook's own pinned
+versions are Colab-runtime-only, as before.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\make_sft_dataset.py
+.venv\Scripts\python.exe -m pytest -q
+.venv\Scripts\python.exe -c "import json; ex = json.loads(open('data/processed/sft/train.jsonl', encoding='utf-8').readline()); print(list(ex.keys()))"
+.venv\Scripts\python.exe -c "import yaml; c = yaml.safe_load(open('train/config.yaml')); print('response_template' in c, c['completion_only_loss'])"
+.venv\Scripts\python.exe -c "import json, ast; nb = json.load(open('notebooks/train_qlora.ipynb', encoding='utf-8')); [ast.parse(''.join(l for l in ''.join(c['source']).splitlines(keepends=True) if not l.strip().startswith('!'))) for c in nb['cells'] if c['cell_type']=='code']; print('ok', len(nb['cells']), 'cells')"
+```
+Still did not run any training, locally or otherwise -- as instructed. The notebook's actual
+end-to-end training loop (bitsandbytes 4-bit loading, `SFTTrainer.train()`, the real GPU
+step) still could not be executed or tested locally -- same constraint as the original
+step-07 entry. This correction fixes exactly what was reported broken from a real Colab run;
+whether `completion_only_loss` on the new prompt/completion format behaves as documented
+under trl 1.13.0's actual internals is still unverified until the notebook is run again.
+
+**Next step still step-08 — not started, unchanged by this correction.**

@@ -82,23 +82,38 @@ optim: paged_adamw_8bit
 max_grad_norm: 0.3
 
 # --- Completion-only loss -----------------------------------------------------------
-# The loss is computed ONLY on the assistant's response tokens; system and
-# user tokens are masked to -100 (PyTorch's cross-entropy ignore_index) via
-# TRL's DataCollatorForCompletionOnlyLM, keyed on response_template below.
-# Without this, most of the model's fine-tuning capacity goes into learning
-# to WRITE support tickets (reproducing the user turn) instead of learning
-# to CLASSIFY them (producing the assistant turn) -- the actual task.
+# The loss is computed ONLY on the assistant's response tokens; system and user tokens
+# contribute nothing to the loss or its gradient. Without this, most of the model's
+# fine-tuning capacity goes into learning to WRITE support tickets (reproducing the user
+# turn) instead of learning to CLASSIFY them (producing the assistant turn) -- the actual
+# task.
 #
-# Verified by hand before the notebook was written (no trl/torch install was
-# possible locally -- see PROGRESS.md step-07 for why): for Qwen2.5's
-# tokenizer, <|im_start|> and <|im_end|> are protected special tokens, so
-# response_template tokenizes IDENTICALLY standalone and in-context -- no
-# silent mismatch (the classic failure mode with this collator on other
-# tokenizers). A real worked example (64 tokens: 47 masked, 17 contributing
-# to loss -- exactly the assistant's JSON + end-of-turn marker) is recorded
-# in PROGRESS.md and reproduced live in the notebook's verification cell.
+# MECHANISM CHANGED after the original step-07 write-up. That version used
+# trl.DataCollatorForCompletionOnlyLM, keyed on a response_template string
+# ("<|im_start|>assistant\n"). Confirmed against the real Colab environment (trl 1.13.0,
+# transformers 5.17.0, peft 0.20.0 -- not assumed): that class no longer exists, and trl
+# exports NO collator classes at all in this version. The obvious replacement,
+# SFTConfig(assistant_only_loss=True) -- masks via the chat template's own
+# {% generation %} markers, through apply_chat_template(return_assistant_tokens_mask=True)
+# -- was tried and rejected: Qwen2.5's chat template has no {% generation %} markers, so
+# the returned assistant_masks array comes back ALL ZEROS. It does not raise -- it would
+# silently mask every token and train on nothing.
+#
+# Fixed by changing the DATASET FORMAT instead of hunting for another collator class:
+# data/processed/sft/*.jsonl (src/ticket_router/make_sft_dataset.py) now stores each
+# example as {"prompt": [system, user], "completion": [assistant]} -- TRL's conversational
+# prompt-completion format -- instead of one flat "messages" list. With that split stored
+# explicitly in the data, completion_only_loss=True below finds the loss boundary from
+# tokenized length (prompt tokens, then completion tokens), not from matching a literal
+# response_template string against the rendered sequence -- so there's nothing that needs
+# to stay in sync with a chat template's exact token boundaries, and no dependency on the
+# chat template supporting generation-role masking either. Verified by hand in the
+# notebook's masking-verification cell (step 7): decodes the completion tokens and asserts
+# they are EXACTLY the gold assistant JSON, not merely that "some tokens are unmasked" --
+# a check that only confirms a field exists, which is exactly the class of check that let
+# the original response_template mechanism's removal go unnoticed until it was probed
+# directly against a real Colab session.
 completion_only_loss: true
-response_template: "<|im_start|>assistant\n"   # Qwen2.5's chat-template assistant marker
 
 # --- Padding / collator ---------------------------------------------------------------
 # Dynamic per-batch padding: each batch is padded to ITS OWN longest example,

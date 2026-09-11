@@ -7,22 +7,38 @@ project is built around meaningless, so it was deliberately not done (see
 README.md).
 
 Reads data/processed/{train,val,test}.parquet and label_map.json, and writes
-data/processed/sft/{train,val,test}.jsonl -- one {"messages": [...]} object
-per line (system + user + assistant turns, as role/content dicts). This is a
-MESSAGE LIST, not a pre-rendered string: the target model's own chat template
-(Jinja2, shipped with its tokenizer) is applied at training time via
-`tokenizer.apply_chat_template(example["messages"], tokenize=True)`, so the
-file itself carries no model-specific special tokens or formatting baked in.
+data/processed/sft/{train,val,test}.jsonl -- one
+{"prompt": [system, user], "completion": [assistant]} object per line (each
+of "prompt"/"completion" a list of role/content dicts). This is TRL's
+conversational PROMPT-COMPLETION format, not a single flat "messages" list
+(that was this file's original step-07 format -- changed in the step-07
+completion_only_loss correction below). Neither prompt nor completion is a
+pre-rendered string: the target model's own chat template (Jinja2, shipped
+with its tokenizer) is applied at training time.
+
+Why prompt/completion instead of one "messages" list: trl 1.13.0 removed
+DataCollatorForCompletionOnlyLM (trl exports no collator classes at all in
+this version), and its replacement, SFTConfig(assistant_only_loss=True)
+(masks via the chat template's own {% generation %} markers), does not work
+for this project's target model -- Qwen2.5's chat template has no
+{% generation %} markers, so it returns an all-zeros assistant mask
+*silently* (no error) instead of raising. With the prompt/completion split
+stored explicitly in the data, SFTConfig(completion_only_loss=True) can
+determine the loss boundary from tokenized length instead, needing neither a
+response_template string nor chat-template generation-mask support. See
+train/config.yaml's "Completion-only loss" comment and
+notebooks/train_qlora.ipynb's masking-verification cell for the full
+reasoning and a worked, content-checked example.
 
 Each example:
-  - system (identical across all examples): states the task and lists every
-    allowed value per field, from label_map.json (the same single source of
-    truth used by schema.py and api_predictor.py elsewhere in this project).
-  - user: the ticket's `text` column, verbatim.
-  - assistant: MINIFIED JSON (json.dumps(..., separators=(",", ":")), no
-    whitespace) with keys in the fixed order queue, priority, type -- the
-    same order used throughout the codebase (schema.py's TicketLabels,
-    metrics.py's TARGET_FIELDS).
+  - prompt = [system, user]. system (identical across all examples): states
+    the task and lists every allowed value per field, from label_map.json
+    (the same single source of truth used by schema.py and api_predictor.py
+    elsewhere in this project). user: the ticket's `text` column, verbatim.
+  - completion = [assistant]. assistant: MINIFIED JSON
+    (json.dumps(..., separators=(",", ":")), no whitespace) with keys in the
+    fixed order queue, priority, type -- the same order used throughout the
+    codebase (schema.py's TicketLabels, metrics.py's TARGET_FIELDS).
 
 Fine-tuning target model: FT_BASE_MODEL, read from .env, defaulting to
 Qwen/Qwen2.5-1.5B-Instruct (public, apache-2.0, not gated -- confirmed via
@@ -124,13 +140,27 @@ def build_assistant_content(row: pd.Series) -> str:
 
 
 def build_example(row: pd.Series, system_message: str) -> dict:
+    """TRL's conversational prompt-completion format: prompt and completion
+    are stored separately (not one flat message list) so
+    SFTConfig(completion_only_loss=True) can find the loss boundary from the
+    data itself -- see the module docstring for why."""
     return {
-        "messages": [
+        "prompt": [
             {"role": "system", "content": system_message},
             {"role": "user", "content": row["text"]},
+        ],
+        "completion": [
             {"role": "assistant", "content": build_assistant_content(row)},
-        ]
+        ],
     }
+
+
+def full_messages(example: dict) -> list[dict]:
+    """prompt + completion concatenated back into one message list -- used
+    only for token-length measurement (see num_tokens_target/num_tokens_openai
+    below), which needs the full rendered sequence exactly as SFTTrainer will
+    tokenize it (prompt tokens followed by completion tokens)."""
+    return example["prompt"] + example["completion"]
 
 
 def get_ft_base_model() -> str:
@@ -214,8 +244,8 @@ def write_samples_report(sample_examples: list[dict], sample_lengths_target: lis
 
     for i, (ex, length, row) in enumerate(
             zip(sample_examples, sample_lengths_target, sample_rows), start=1):
-        user_msg = ex["messages"][1]["content"]
-        assistant_msg = ex["messages"][2]["content"]
+        user_msg = ex["prompt"][1]["content"]
+        assistant_msg = ex["completion"][0]["content"]
         lines.append(f"## Example {i} -- ticket `{row['id']}` ({length} tokens, {ft_base_model})\n")
         lines.append("**User turn (ticket text):**\n")
         lines.append("```\n" + user_msg + "\n```\n")
@@ -225,13 +255,13 @@ def write_samples_report(sample_examples: list[dict], sample_lengths_target: lis
             f"Gold labels: queue={row['queue']!r}, priority={row['priority']!r}, type={row['type']!r}\n"
         )
         lines.append(
-            f"**Raw JSONL line (exact bytes written to the file -- a message list, not a "
-            f"pre-rendered string; the target model's chat template is applied at training "
-            f"time, not baked in here):**\n"
+            f"**Raw JSONL line (exact bytes written to the file -- TRL's prompt-completion "
+            f"format, not a pre-rendered string; the target model's chat template is applied "
+            f"at training time, not baked in here):**\n"
         )
         lines.append("```json\n" + json.dumps(ex, ensure_ascii=False) + "\n```\n")
         if i == 1:
-            rendered = tokenizer.apply_chat_template(ex["messages"], tokenize=False,
+            rendered = tokenizer.apply_chat_template(full_messages(ex), tokenize=False,
                                                        add_generation_prompt=False)
             lines.append(
                 f"**What `{ft_base_model}`'s chat template actually renders this to at training "
@@ -328,7 +358,7 @@ def main() -> None:
     for split in SPLITS:
         df = pd.read_parquet(PROCESSED_DIR / f"{split}.parquet")
         examples = [build_example(row, system_message) for _, row in df.iterrows()]
-        lengths = [num_tokens_target(ex["messages"], tokenizer) for ex in examples]
+        lengths = [num_tokens_target(full_messages(ex), tokenizer) for ex in examples]
         split_lengths_target[split] = lengths
 
         out_path = SFT_DIR / f"{split}.jsonl"
@@ -341,7 +371,7 @@ def main() -> None:
             train_examples = examples
             train_rows = [row for _, row in df.iterrows()]
             if openai_model:
-                train_lengths_openai = [num_tokens_openai(ex["messages"], openai_model)
+                train_lengths_openai = [num_tokens_openai(full_messages(ex), openai_model)
                                          for ex in examples]
 
     train_lengths_target = split_lengths_target["train"]
