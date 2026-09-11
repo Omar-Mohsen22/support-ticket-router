@@ -1447,3 +1447,107 @@ file touched. **No dependency added.**
 Still did not run any training, locally or otherwise -- as instructed.
 
 **Next step still step-08 — not started, unchanged by this correction.**
+
+## step-08: Colab-tested fixes to train_qlora.ipynb -- Drive-default resumable training, real masking-check bug fixed, TRL's own labels verified
+
+**What was built:** three edits to `notebooks/train_qlora.ipynb` only (no other file
+touched, per instruction) -- the first real fixes driven by feedback from an actual Colab
+run of the notebook, not just local reasoning about its API surface.
+
+**1. Google Drive as the default `REPO_ROOT`, and the full run made resumable.**
+The Colab runtime disconnects frequently when left idle; the previous default
+(`/content/ticket-router`, Colab-local) meant a disconnect wiped both the uploaded data and
+every saved checkpoint, restarting the ~45-90 minute full run from zero. Cell 7 now defaults
+to `/content/drive/MyDrive/ticket-router` (mounted via `drive.mount`), with local disk kept
+as a commented-out alternative -- reasoning recorded directly in the cell's comments: Drive
+survives a disconnect; the I/O cost is small because `load_dataset()` reads the JSONL files
+once and `datasets` memory-maps them locally afterward, and checkpoints are LoRA adapters
+only (tens of MB, ~10 of them across the run); the base model's own weights still download
+to Colab's local HF cache every session on purpose (cheaper than reading ~3GB back over
+Drive's FUSE mount); uploading into `MyDrive/ticket-router` is a one-time setup. The
+`os.makedirs` calls and the `required_files`/`missing` reporting block were left completely
+unchanged. The adjacent "Get the repo" markdown cell was also updated so its prose doesn't
+contradict the code beneath it (the same drift class already hit once with
+`data/README.md` -- see the step-02 corrections).
+
+Cell 30 (the full training run) now checks `full_output_dir` for existing
+`checkpoint-*` directories before calling `trainer.train()`: if any exist, it resumes from
+the latest one (`trainer.train(resume_from_checkpoint=<latest>)`) and prints which checkpoint
+it resumed from; if none exist, it starts fresh and prints that instead.
+`resume_from_checkpoint=True` is never passed unconditionally (it raises on an empty
+directory -- e.g. the very first run).
+
+Cell 23 (the smoke-test disk-size projection) still calls `shutil.disk_usage(REPO_ROOT)`
+unchanged, but now prints the raw `total`/`used`/`free` GB it returns (not just `free`), plus
+an explicit note: it is **unverified** whether `shutil.disk_usage()` reports Google Drive's
+real account quota on a FUSE-mounted path, or something else entirely -- not assumed either
+way, flagged for the user to verify by hand against `drive.google.com`'s own storage
+indicator if the numbers look implausible, before trusting the disk projection.
+
+**2. The real masking-verification bug, from an actual Colab run against
+`Qwen/Qwen2.5-1.5B-Instruct`:**
+```
+AssertionError: Prompt tokens are not an exact prefix of the full sequence
+```
+Cause: the previous version of cell 15 (step 7) called
+`apply_chat_template(..., tokenize=True)` separately for the prompt and for
+prompt+completion, and asserted the resulting token-id lists lined up as a prefix -- they
+didn't, for this tokenizer. Fixed by rendering to **text** first (`tokenize=False`),
+asserting the **text**-prefix relation (guaranteed by the chat template's own construction),
+and only then tokenizing each rendered string independently with `add_special_tokens=False`.
+Everything else in the cell (the full per-token MASKED/LOSS table, the `n_loss > 0`
+assertion, the decode-and-compare-against-gold-JSON content check) was left unchanged. The
+cell's comment claiming this was "exactly the boundary trl 1.13.0's SFTTrainer uses" was
+corrected to claim only what's actually true: it verifies the boundary is well-defined at the
+tokenizer level, not that it matches TRL's real internals -- that's what item 3 verifies.
+
+**Independently verified locally, not just trusted from the instruction** -- the target
+model's tokenizer was already cached locally from step-06, so this needed no GPU/trl/torch.
+Ran both the OLD and NEW tokenization approaches against 30 real training examples from
+`data/processed/sft/train.jsonl`:
+- **OLD approach (token-prefix check): failed on 30/30 examples** -- reproduces the exact
+  Colab `AssertionError` locally, confirming the reported bug is real and not
+  environment-specific.
+- **NEW approach (text-prefix, then tokenize separately): passed on 30/30 examples** --
+  `full_text.startswith(prompt_text)` held every time, and every decoded completion matched
+  its gold JSON exactly.
+
+**3. New cell verifying TRL's actual labels, not our own reconstruction** -- inserted
+immediately after the trainer factory (step 10). Builds a throwaway `SFTTrainer` via
+`build_trainer()` into a `tempfile.mkdtemp()` directory, pulls one real batch from
+`trainer.get_train_dataloader()`, and for every row: decodes the tokens where
+`labels != -100` and asserts they parse as JSON with exactly the keys `queue`, `priority`,
+`type` (`STOP: do not train until this is fixed` on failure), asserts no row has zero
+unmasked positions, and prints row 0's masked/unmasked counts and decoded text so the result
+is visible, not a silently-passing assertion. This is deliberately the check that
+`assistant_only_loss` could NOT have passed even by accident (that mechanism also "returned a
+mask" -- it was just silently all zeros) -- it inspects TRL's real tensors, not a
+boundary computed independently of them.
+
+**Could not be verified locally** -- `get_train_dataloader()` needs a real `SFTTrainer`
+wrapping an actual (4-bit-quantized) model, which needs `trl`/`bitsandbytes`/a GPU, none of
+which are available in this environment (same constraint noted throughout the step-07
+entries). Flagged directly in the new cell's own markdown. This is the one piece of this
+step-08 correction that is still unconfirmed until run on Colab.
+
+**Files changed:** `notebooks/train_qlora.ipynb` only -- cell 7 (REPO_ROOT + markdown above
+it), cell 15 (masking-verification tokenization + comment), cell 23 (disk-usage raw
+print + uncertainty note), cell 30 (resumable full run), and two new cells inserted after
+cell 21 (TRL label-check markdown + code). No other file touched, and no dependency added.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import json, ast; nb = json.load(open('notebooks/train_qlora.ipynb', encoding='utf-8')); [ast.parse(''.join(l for l in ''.join(c['source']).splitlines(keepends=True) if not l.strip().startswith('!'))) for c in nb['cells'] if c['cell_type']=='code']; print('ok', len(nb['cells']), 'cells')"
+```
+The 30/30-vs-30/30 masking comparison above is reproducible locally (Qwen tokenizer only, no
+GPU) but was a one-off diagnostic script, not committed as a script of its own -- reproducing
+it means re-running the same `apply_chat_template`/`tokenizer()` calls shown in cell 15
+against rows from `data/processed/sft/train.jsonl` by hand.
+
+Still did not run any training, locally or otherwise. The GPU-dependent parts of this
+notebook (the actual QLoRA training loop, and now also item 3's TRL-label check) remain
+unverified until run on Colab.
+
+**Next step still step-08's own Colab run — waiting on the user to run the corrected
+notebook and report back what happens (the smoke test, the disk projection, and now also
+whether the new TRL-label-check cell passes).**
