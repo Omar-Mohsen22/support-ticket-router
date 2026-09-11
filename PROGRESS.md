@@ -1388,3 +1388,62 @@ whether `completion_only_loss` on the new prompt/completion format behaves as do
 under trl 1.13.0's actual internals is still unverified until the notebook is run again.
 
 **Next step still step-08 — not started, unchanged by this correction.**
+
+## Correction (post step-07, continued): pin the remaining 5 libraries + fix REPO_ROOT drift
+
+Two independent fixes, requested together.
+
+### 1. The remaining 5 libraries pinned with their real Colab-read versions
+
+The previous correction left `accelerate`, `bitsandbytes`, `datasets`, `pyyaml`, and
+`huggingface_hub` unpinned in the install cell, on purpose -- their exact versions in the
+target Colab environment hadn't been read yet, and guessing would have repeated the mistake
+that correction existed to fix. Given the real versions this time
+(`accelerate==1.14.0`, `bitsandbytes==0.50.2`, `datasets==4.8.5`, `pyyaml==6.0.3`,
+`huggingface_hub==1.29.0`), the install cell now pins all 8 libraries it installs exactly;
+only `torch` stays unpinned (ships with Colab's own image -- unchanged reasoning from
+before). The version-print cell right after was simplified to match: every one of the 8 is
+now printed under "Pinned (confirmed exact versions)" -- there's no more "unpinned, report
+these back" section, since nothing is unpinned any more except torch.
+
+### 2. REPO_ROOT drift -- same failure mode as the earlier data/README.md drift, different file
+
+Reported: the "Get the repo" cell still defaulted to Google Drive
+(`/content/drive/MyDrive/ticket-router`) and hard-`assert`ed that path existed, which fails
+on a fresh Colab session that isn't using Drive. The user had been hand-patching this cell
+directly in Colab every session, which is silently lost on every re-upload of the notebook --
+the exact same class of problem already hit once with `data/README.md`'s generator drifting
+out of sync with hand-edits (see the step-02 corrections). Fixed at the source this time, in
+the notebook itself, not by patching a running session:
+
+- `REPO_ROOT` now defaults to **`/content/ticket-router`** (Colab-local disk), not Drive.
+  Reasoning added directly in the cell: local disk is faster I/O for training, and it's the
+  exact path the step-11 checkpoint disk-size check measures free space at (so that check and
+  the actual training run always agree on which filesystem matters).
+- The cell now runs `os.makedirs(f"{REPO_ROOT}/train", exist_ok=True)` and
+  `os.makedirs(f"{REPO_ROOT}/data/processed/sft", exist_ok=True)` -- creates the folders this
+  notebook needs so an upload into them (rather than a `git clone`, which would create the
+  structure automatically) doesn't need the directories to exist by hand first.
+- The old hard `assert` on Drive paths is gone. Instead, the cell checks 4 required paths
+  (`train/config.yaml`, `data/processed/sft/train.jsonl`, `data/processed/sft/val.jsonl`, and
+  `src/` -- the last one added beyond what was originally asserted, since step 6/11/16 all
+  need `ticket_router.schema.TicketLabels` importable from it) and **prints** which are still
+  missing, rather than raising -- a fresh `REPO_ROOT` legitimately has nothing in it the
+  first time this cell runs on a new session, so asserting on that would be asserting on an
+  expected, not exceptional, state.
+- Google Drive is kept as a **commented-out alternative** in the same cell (3 lines: mount,
+  set `REPO_ROOT`), with a one-line reason for when it's actually the better choice: it
+  persists checkpoints across a disconnected/reconnected Colab session, which local disk does
+  not -- relevant specifically for the ~45-90 minute full run (step 13), not the smoke test.
+
+**Files changed:** `notebooks/train_qlora.ipynb` only (`cdef0d15` install cell, `020aec62`
+version-print cell, `fb693489`/`51f4fa52` -- the "Get the repo" markdown + code). No other
+file touched. **No dependency added.**
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import json, ast; nb = json.load(open('notebooks/train_qlora.ipynb', encoding='utf-8')); [ast.parse(''.join(l for l in ''.join(c['source']).splitlines(keepends=True) if not l.strip().startswith('!'))) for c in nb['cells'] if c['cell_type']=='code']; print('ok', len(nb['cells']), 'cells')"
+```
+Still did not run any training, locally or otherwise -- as instructed.
+
+**Next step still step-08 — not started, unchanged by this correction.**
