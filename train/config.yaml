@@ -40,7 +40,12 @@ seed: 42
 quantization:
   load_in_4bit: true
   bnb_4bit_quant_type: nf4
-  bnb_4bit_compute_dtype: bfloat16
+  # bnb_4bit_compute_dtype is deliberately NOT set here -- it is decided AT RUNTIME by the
+  # notebook's GPU-check cell (cell 1): bfloat16 on Ampere-or-newer (CUDA compute capability
+  # major >= 8), float16 otherwise. The free Colab tier usually allocates a T4, which is
+  # Turing (compute capability 7.5) and does NOT support bf16 -- hardcoding bfloat16 here would
+  # be silently wrong on the exact GPU this notebook is most likely to run on. See the printed
+  # "GPU detected / compute dtype chosen" line at the top of the notebook's output.
   bnb_4bit_use_double_quant: true
 
 # --- LoRA --------------------------------------------------------------------------
@@ -106,13 +111,33 @@ response_template: "<|im_start|>assistant\n"   # Qwen2.5's chat-template assista
 padding: dynamic_per_batch
 
 # --- Evaluation & checkpointing ---------------------------------------------------------
+# Step math: 13,070 train examples / effective batch size 16 (per_device 4 x grad_accum 4)
+# = ~817 steps/epoch, ~2,450 steps over num_train_epochs=3. At eval_steps=50 that was 49 full
+# evaluations over 1,635 validation examples during a single GPU session with a time limit --
+# spending more GPU time measuring than learning. eval_steps/save_steps raised to 250 (~10
+# evaluations over the full run) to fix that.
 eval_strategy: steps
-eval_steps: 50
+eval_steps: 250
 save_strategy: steps
-save_steps: 50
+save_steps: 250
 logging_steps: 10
 save_total_limit: 3
-load_best_model_at_end: true
+
+# Two DIFFERENT validation numbers are used in this run -- do not confuse one for the other:
+#   1. MID-TRAINING (every eval_steps, logged to the loss curve): a fixed, seeded random
+#      SUBSAMPLE of the validation set, size eval_subsample_size below. Fast, for monitoring
+#      the trend only. THE LOSS CURVE PLOTTED DURING TRAINING IS THIS SUBSAMPLE METRIC, NOT A
+#      FULL-VAL METRIC.
+#   2. FINAL best-checkpoint selection (once, after the full run, over the up to
+#      save_total_limit checkpoints saved above): the FULL validation set (all 1,635
+#      examples), done manually in the notebook's "Select best checkpoint" cell -- see there.
+#      This is why load_best_model_at_end is false below: Trainer's own load_best_model_at_end
+#      would select against whichever eval_dataset it's given, which during training is the
+#      subsample -- picking the true best checkpoint needs the full set, so that selection is
+#      done manually instead, after training finishes.
+eval_subsample_size: 400
+eval_subsample_seed: 42
+load_best_model_at_end: false   # see note above -- final selection is manual, over the FULL val set
 metric_for_best_model: eval_loss
 greater_is_better: false   # lower eval_loss is better -- keep the BEST checkpoint, not the last
 
@@ -142,11 +167,7 @@ class_weighting: none
 
 # --- Hugging Face Hub ------------------------------------------------------------------------
 push_to_hub: true
-# Fill in with <your-hf-username>/<repo-name> before running -- left blank
-# deliberately (no placeholder username guessed) since it must be your own
-# account. The notebook raises a clear error if this is still empty when it
-# reaches the push step.
-hub_model_id: ""
+hub_model_id: "Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora"
 hub_private: true
 
 # --- Output paths (Colab-local; the adapter is pushed to the Hub, not committed here) ---------

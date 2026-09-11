@@ -1100,3 +1100,98 @@ the Hub instead).
 `notebooks/train_qlora.ipynb` on Colab and report back the result.
 
 **Next step:** step-08 — not started yet (to be defined once the Colab run's result is known).
+
+## Correction (post step-07): three pre-flight fixes to train/config.yaml + the notebook
+
+Requested before running on Colab, no training started. Three independent fixes, all applied.
+
+### 1. bf16/fp16 compute dtype decided at runtime, not hardcoded
+
+`train/config.yaml`'s `quantization.bnb_4bit_compute_dtype: bfloat16` was wrong for the
+free Colab tier's usual T4 GPU: T4 is Turing (CUDA compute capability 7.5), and bf16 needs
+Ampere or newer (compute capability major >= 8). Fixed in the notebook's GPU-check cell
+(now cell 1): after confirming a GPU is present, it reads
+`torch.cuda.get_device_capability()`, sets `USE_BF16 = (major >= 8)` and
+`COMPUTE_DTYPE = torch.bfloat16 if USE_BF16 else torch.float16`, and prints the detected
+GPU name/compute capability and the chosen dtype before anything else runs. `COMPUTE_DTYPE`
+now feeds `BitsAndBytesConfig.bnb_4bit_compute_dtype` (cell 9) and `USE_BF16` feeds the
+trainer's `bf16`/`fp16` flags (cell 10's `build_trainer`, previously hardcoded
+`bf16=True` regardless of GPU -- that was a second, related bug fixed at the same time).
+`train/config.yaml` no longer sets `bnb_4bit_compute_dtype` at all -- replaced with a
+comment explaining it's runtime-decided and why.
+
+### 2. eval_steps/save_steps raised to 250 + mid-training eval on a seeded subsample
+
+At `eval_steps: 50`, 13,070 train examples / effective batch 16 -> ~817 steps/epoch ->
+~2,450 steps over 3 epochs -> 49 full evaluations over the 1,635-example validation set --
+too much GPU time spent measuring instead of learning on a time-limited Colab session.
+Fixed:
+- `eval_steps`/`save_steps`: 50 -> **250** (~10 evaluations over the full run).
+- New `eval_subsample_size: 400` / `eval_subsample_seed: 42` in `train/config.yaml`. The
+  notebook (cell 6) now builds `eval_subsample = raw_datasets["val"].shuffle(seed=...).select(...)`
+  once, and both the smoke test and the full run evaluate against it during training --
+  speed only.
+- The **full** 1,635-example validation set is kept untouched and used exactly once: a new
+  notebook step (**14, "Select the best checkpoint using the FULL validation set"**,
+  between the full run and the save/push step) re-evaluates each of the up to
+  `save_total_limit`=3 checkpoints saved during training on the full val set, picks the
+  lowest `eval_loss`, and loads that checkpoint into `trainer.model` -- the checkpoint
+  that actually gets saved/pushed/previewed is the FULL-val winner, not whichever the
+  subsample-monitored last step happened to be.
+- `load_best_model_at_end` changed `true` -> **false**: with the subsample as the
+  training-time `eval_dataset`, Trainer's own `load_best_model_at_end` would have picked
+  the "best" checkpoint by the subsample metric, not the full one -- final selection is
+  done manually instead (the new step 14).
+- `train/config.yaml`'s "Evaluation & checkpointing" section now states explicitly, in
+  comments, which of the two validation numbers is which, so the loss curve plotted during
+  training (subsample) is never mistaken for a full-val metric -- the notebook's loss-curve
+  cells (steps 11 and 13) also label the eval-loss line with the subsample size directly on
+  the plot legend, and step 13's cell prints an explicit note pointing at step 14.
+
+### 3. hub_model_id set + a pre-flight HF token check
+
+`hub_model_id` in `train/config.yaml`: `""` -> **`Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`**.
+
+New notebook step (**5, "Check Hugging Face token (write access)"**), placed right after
+config load and before the smoke test, tokenizer/dataset loading, or any GPU-model work: it
+resolves a token via `huggingface_hub.get_token()` (env var / Colab `HF_TOKEN` secret /
+prior `login()`), raises a clear `RuntimeError` if none is found, and then confirms WRITE
+access with a real probe (`HfApi.create_repo(hub_model_id, exist_ok=True)`, not just parsing
+`whoami()`'s scope fields, since token-permission shapes vary by token type) -- raising a
+second clear error naming the missing permission if that probe fails. This runs before the
+smoke test, so a missing/insufficient token fails in seconds instead of after a ~45-90
+minute full run, at the push step. The push step (now step 15) was also updated to reuse
+this already-validated token (`token=token` passed to `push_to_hub`) instead of calling
+`huggingface_hub.login()` a second time, which would otherwise prompt interactively again.
+
+### Notebook renumbering + a rebuild after an editing-tool failure
+
+Applying the above meant inserting 2 new steps (5 and 14) into the notebook's existing
+14-step structure, renumbering everything from step 5 onward to 16 steps total. The
+in-place cell-by-cell edit tool was used first but produced duplicated/misordered cells
+after the first insert shifted every subsequent cell's position (each edit after that
+targeted a stale position, since this notebook's cells have no stable `id` field for most
+cells and the edit tool's `cell_id` addressing is position-derived) -- caught immediately by
+re-reading the file's raw JSON (`json.load` + inspecting `cell_type`/`source` per cell,
+not just the rendering tool's view) before it was committed. **Fixed by discarding that
+attempt and rebuilding the entire notebook from a single Python script** (`json.dump` of an
+explicit cell list, each cell given a real UUID-derived `id`) with the exact intended final
+content for all 38 cells (16 numbered steps + sub-cells), rather than patching the
+corrupted file further. Verified after rebuilding: valid JSON, `nbformat`/`nbformat_minor`
+and Colab metadata preserved from the original file, all 18 code cells `ast.parse()`-clean,
+`train/config.yaml` re-parses with `yaml.safe_load` and shows the exact expected values
+(`eval_steps`/`save_steps`=250, `eval_subsample_size`=400, `load_best_model_at_end`=False,
+`hub_model_id` set, no `bnb_4bit_compute_dtype` key).
+
+**Files changed:** `train/config.yaml`, `notebooks/train_qlora.ipynb` (both -- no other file
+touched). **No dependency added.**
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import yaml; import json; c = yaml.safe_load(open('train/config.yaml')); print(c['eval_steps'], c['hub_model_id'])"
+.venv\Scripts\python.exe -c "import json, ast; nb = json.load(open('notebooks/train_qlora.ipynb', encoding='utf-8')); [ast.parse(''.join(l for l in ''.join(c['source']).splitlines(keepends=True) if not l.strip().startswith('!'))) for c in nb['cells'] if c['cell_type']=='code']; print('ok', len(nb['cells']), 'cells')"
+```
+Still did not run any training, locally or otherwise -- as instructed. Same open item as
+before: waiting on the user to run `notebooks/train_qlora.ipynb` on Colab and report back.
+
+**Next step still step-08 — not started, unchanged by this correction.**
