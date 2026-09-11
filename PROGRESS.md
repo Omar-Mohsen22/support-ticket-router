@@ -1195,3 +1195,60 @@ Still did not run any training, locally or otherwise -- as instructed. Same open
 before: waiting on the user to run `notebooks/train_qlora.ipynb` on Colab and report back.
 
 **Next step still step-08 — not started, unchanged by this correction.**
+
+## Correction (post step-07, continued): checkpoint-eviction race between `load_best_model_at_end=false` and `save_total_limit`
+
+Flagged before the previous correction's fixes were exercised on Colab: turning
+`load_best_model_at_end` off (so the FULL-val checkpoint selection in step 14 does the real
+picking) also turns off Trainer's own protection of the best checkpoint from its rotation --
+`save_total_limit` was still `3`. At ~2,450 full-run steps / `save_steps`=250, ~10 checkpoints
+get written; a limit of 3 keeps only the *last* 3 on a plain FIFO basis, with no awareness of
+which one is actually best. On 13,070 examples over 3 epochs, overfitting typically starts
+before the run ends, so the true best checkpoint could have been deleted long before step 14
+ever got to look at it -- silently, no error, no warning.
+
+**Fix: `save_total_limit: 3` -> `null`** in `train/config.yaml` (parses to Python `None`,
+which `transformers.TrainingArguments` treats as "keep every checkpoint, never rotate").
+These are LoRA adapters, not full model weights -- a few tens of MB each -- so keeping all
+~10 of them is cheap in principle. `train/config.yaml`'s "Evaluation & checkpointing" section
+now explains this interaction directly in a comment (why a finite limit is unsafe once
+`load_best_model_at_end` is false), and the "two different validation numbers" comment block
+was updated to say "every checkpoint saved above -- `save_total_limit` is null" instead of
+the now-stale "up to `save_total_limit` checkpoints."
+
+**Not just asserted cheap -- measured, before the full run runs:** the notebook's smoke-test
+cell (step 11) now also computes the real on-disk size of one saved checkpoint
+(`sum(f.stat().st_size for f in Path(ckpt_dir).rglob("*") if f.is_file())`), projects the
+full run's checkpoint count from the same step-math as `train/config.yaml`'s comment
+(`ceil(13070 / 16) = 817` steps/epoch x 3 epochs = 2,450 steps, `ceil(2450 / 250)` = ~10
+checkpoints), multiplies to a projected total GB, and compares it against
+`shutil.disk_usage(REPO_ROOT).free` -- `REPO_ROOT` because that's wherever the checkpoints
+will actually land, whether Colab-local (`git clone` option) or a mounted Google Drive
+(the default option). If the projection exceeds free space, it prints an explicit `WARNING`
+and says to stop and decide together, rather than silently shrinking `save_total_limit`
+itself -- per the instruction, the notebook does not make that call unilaterally. The new
+"STOP AND CONFIRM" cell (step 12) now lists checking for that `WARNING` as a third condition
+alongside the loss-curve and generated-JSON checks already there.
+
+**Edited via `NotebookEdit` "replace" only this time (no insert/delete)** -- the previous
+correction's cell-position corruption came from *inserting* cells into a notebook where most
+cells had no persisted `id`, which forced the read tool to fabricate position-based labels
+that went stale after the first insert. The full rebuild from that correction gave every cell
+a real, stable UUID-derived `id`, so this round's 4 targeted `replace` edits (the overview
+cell's runtime/disk estimates, the smoke-test cell's new disk-size code, and two markdown
+cells' wording) landed on the correct cells with no repositioning risk -- verified anyway,
+the same way as last time: raw JSON re-parsed, all 38 cells still present with unique ids,
+all 18 code cells still `ast.parse()`-clean, `train/config.yaml` re-parses with
+`yaml.safe_load` to `save_total_limit: None` exactly.
+
+**Files changed:** `train/config.yaml`, `notebooks/train_qlora.ipynb` (both -- no other file
+touched). **No dependency added** (`pathlib`, `shutil`, `math`, `glob` are all stdlib).
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import yaml; c = yaml.safe_load(open('train/config.yaml')); print(repr(c['save_total_limit']))"
+.venv\Scripts\python.exe -c "import json, ast; nb = json.load(open('notebooks/train_qlora.ipynb', encoding='utf-8')); [ast.parse(''.join(l for l in ''.join(c['source']).splitlines(keepends=True) if not l.strip().startswith('!'))) for c in nb['cells'] if c['cell_type']=='code']; print('ok', len(nb['cells']), 'cells')"
+```
+Still did not run any training, locally or otherwise -- as instructed.
+
+**Next step still step-08 — not started, unchanged by this correction.**

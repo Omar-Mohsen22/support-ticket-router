@@ -121,16 +121,31 @@ eval_steps: 250
 save_strategy: steps
 save_steps: 250
 logging_steps: 10
-save_total_limit: 3
+
+# save_total_limit is deliberately null (unlimited -- Trainer keeps every checkpoint). With
+# load_best_model_at_end=false (below), Trainer's own "protect the best checkpoint from
+# rotation" logic is OFF -- a finite save_total_limit would silently delete older checkpoints
+# as training progresses, on a plain FIFO/step-order basis, with NO awareness of which one is
+# actually best. At ~2,450 full-run steps / save_steps=250, that's ~10 checkpoints; a limit of
+# 3 (the old value) would keep only the LAST 3 -- and on 13,070 examples over 3 epochs,
+# overfitting typically starts well before the end, so the true best checkpoint (by full-val
+# eval_loss, picked in the notebook's step 14) could be deleted long before training
+# finishes, silently, with no error. These are LoRA adapters (a few tens of MB each), not full
+# model weights, so keeping all of them is cheap -- the notebook's smoke-test cell (step 11)
+# measures one real checkpoint's on-disk size and projects the full-run total before the full
+# run starts, specifically to catch it if that assumption turns out to be wrong on Colab's
+# actual free disk.
+save_total_limit: null
 
 # Two DIFFERENT validation numbers are used in this run -- do not confuse one for the other:
 #   1. MID-TRAINING (every eval_steps, logged to the loss curve): a fixed, seeded random
 #      SUBSAMPLE of the validation set, size eval_subsample_size below. Fast, for monitoring
 #      the trend only. THE LOSS CURVE PLOTTED DURING TRAINING IS THIS SUBSAMPLE METRIC, NOT A
 #      FULL-VAL METRIC.
-#   2. FINAL best-checkpoint selection (once, after the full run, over the up to
-#      save_total_limit checkpoints saved above): the FULL validation set (all 1,635
-#      examples), done manually in the notebook's "Select best checkpoint" cell -- see there.
+#   2. FINAL best-checkpoint selection (once, after the full run, over EVERY checkpoint saved
+#      above -- save_total_limit is null, so none are deleted): the FULL validation set (all
+#      1,635 examples), done manually in the notebook's "Select best checkpoint" cell -- see
+#      there.
 #      This is why load_best_model_at_end is false below: Trainer's own load_best_model_at_end
 #      would select against whichever eval_dataset it's given, which during training is the
 #      subsample -- picking the true best checkpoint needs the full set, so that selection is
