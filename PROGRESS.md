@@ -1711,3 +1711,60 @@ still open -- not touched in this step.
 **Next step: still the same Colab run this notebook has been waiting on since step-08 --
 now covering the step-09 padding fix and this step-10 SFTConfig fix together, plus the still-open
 `generate_one()` question from step-09.**
+
+## step-11: fix smoke-test crash -- LoRA params loaded as bfloat16, fp16 GradScaler can't unscale them
+
+**Edited directly on disk by the user, not by this session** -- reviewed and committed, not
+re-edited. `git diff` confirmed the change is exactly three `dtype=COMPUTE_DTYPE` additions
+(one in the model-loading cell, two in the best-checkpoint-selection cell's two
+`AutoModelForCausalLM.from_pretrained` calls) plus their explanatory comments -- nothing
+else. (A naive grep for the addition first looked like 4 hits, not 3 -- that was the
+model-loading cell's **pre-existing, unrelated** `bnb_4bit_compute_dtype=COMPUTE_DTYPE` line
+matching the same substring; confirmed by reading the full cell that only one genuinely new
+`dtype=COMPUTE_DTYPE` kwarg was added there.) Notebook re-verified valid JSON, all code cells
+parse via `ast.parse`.
+
+**The crash, from a real T4 Colab run -- this time the smoke test itself, not a setup cell:**
+```
+NotImplementedError: "_amp_foreach_non_finite_check_and_unscale_cuda" not implemented for 'BFloat16'
+```
+Diagnosed by probing the loaded model directly: all 392 trainable LoRA parameters were
+`torch.bfloat16`, because `AutoModelForCausalLM.from_pretrained` was given no `dtype`, so the
+model's dtype fell back to Qwen2.5's own `config.json` (which declares `bfloat16`). On a T4,
+`USE_BF16` is `False` (T4 is Turing, no bf16 support -- see step-07), so the trainer runs fp16
+mixed precision instead, and fp16's `GradScaler` cannot unscale bfloat16 gradients --
+unrelated to `bnb_4bit_compute_dtype`, which only controls the dtype the 4-bit base weights
+are dequantized to inside matmuls, not the dtype of the trainable LoRA parameters that
+actually carry gradients. Fixed by passing `dtype=COMPUTE_DTYPE` (the same runtime-detected
+dtype from cell 1's GPU check -- bfloat16 on Ampere+, float16 on Turing) to all three
+`AutoModelForCausalLM.from_pretrained` calls, so the LoRA parameters' dtype always matches
+what the trainer's mixed-precision mode can actually handle. `dtype` (not `torch_dtype`,
+deprecated in transformers 5.x) is the correct kwarg name in transformers 5.17.0.
+
+**Confirmed on GPU: the new TRL-label-check cell (added in step-08, never executed before
+this run) passed for real.** Batch of 4 rows: row 0 had 246 masked / 16 unmasked positions,
+and all 4 rows' unmasked labels decoded to valid JSON with exactly the keys `queue`,
+`priority`, `type`. This closes the one piece of step-08 that was flagged as
+"not executable/testable locally" -- `SFTTrainer`'s actual labels, not our own
+reconstruction, are now confirmed correct on the real target GPU. (The smoke test's crash
+happened in the training step itself, which only triggers `GradScaler` during the backward
+pass -- the label-check cell only pulls a batch and inspects it, so it ran and passed before
+the crash.)
+
+**Files changed:** `notebooks/train_qlora.ipynb` only (edited by the user directly, reviewed
+and committed here). No other file touched, no dependency added.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import json, ast; nb = json.load(open('notebooks/train_qlora.ipynb', encoding='utf-8')); [ast.parse(''.join(l for l in ''.join(c['source']).splitlines(keepends=True) if not l.strip().startswith('!'))) for c in nb['cells'] if c['cell_type']=='code']; print('ok', len(nb['cells']), 'cells')"
+```
+
+Still did not run any training end-to-end -- the smoke test crashed on the bug this step
+fixes; whether it now runs to completion is unverified until the next Colab attempt. The
+still-open item from step-09 (`generate_one()`'s `apply_chat_template(tokenize=True)` call,
+cell 29 -- used by both the smoke test's generated-outputs cell and the post-train preview)
+remains untouched and unconfirmed either way.
+
+**Next step: re-run the smoke test on Colab with this fix in place. If it completes, that
+also newly exercises `generate_one()` for the first time (step 11's "5 generated outputs"
+cell) -- worth watching specifically for the step-09 open item.**
