@@ -1551,3 +1551,89 @@ unverified until run on Colab.
 **Next step still step-08's own Colab run — waiting on the user to run the corrected
 notebook and report back what happens (the smoke test, the disk projection, and now also
 whether the new TRL-label-check cell passes).**
+
+## step-09: fix step 8's padding-check crash -- same `apply_chat_template(tokenize=True)` bug, third time
+
+**What was built:** one fix to `notebooks/train_qlora.ipynb`'s cell 17 (the padding-check
+cell, "## 8. Confirm padding: dynamic per-batch, not fixed to `max_seq_len`"), plus a full
+notebook-wide search for the same bug pattern -- reported below, not yet fixed elsewhere.
+
+**The bug, reported from a real Colab run:**
+```
+ValueError: type of {'attention_mask': [...], 'input_ids': [...]} unknown: <class 'dict'>
+```
+Cause: `tokenize_full()` called `tokenizer.apply_chat_template(..., tokenize=True, ...)`,
+which returns a dict-like (`input_ids` + `attention_mask`), not a plain list of ints. The
+function then wrapped that dict inside `{"input_ids": ids}`, so `tokenizer.pad()` received a
+list of dicts instead of a list of int-lists, and raised. **Exactly the same failure mode as
+the step-08 masking-cell bug**: `apply_chat_template(tokenize=True)` does not return what the
+variable name (`ids`) implies.
+
+**Fixed the same way that cell was fixed** (per instruction): render to text first
+(`tokenize=False`), then tokenize the text with the plain tokenizer call:
+```python
+def tokenize_full(ex):
+    text = tokenizer.apply_chat_template(
+        ex["prompt"] + ex["completion"], tokenize=False, add_generation_prompt=False,
+    )
+    ids = tokenizer(
+        text, truncation=True, max_length=config["max_seq_len"],
+        add_special_tokens=False,
+    )["input_ids"]
+    return {"input_ids": ids}
+```
+The rest of the cell (the batch-building, `tokenizer.pad()` calls, and the print statements
+demonstrating dynamic per-batch padding) is unchanged.
+
+**Verified locally, not just trusted** -- same approach as the last two rounds: ran the fixed
+`tokenize_full()` against 12 real training examples using the locally-cached Qwen2.5-1.5B-Instruct
+tokenizer (no GPU/trl needed for this specific check). Confirmed `tokenize_full()` now returns
+a plain `list` of ints (previously would have been a dict), and that `tokenizer.pad()` succeeds
+and still demonstrates the thing this cell exists to prove: batch A (4 examples, native lengths
+268/231/230/194) padded to 268 for every row; batch B (8 examples, native lengths up to 292)
+padded to 292 for every row -- two *different* padded lengths, confirming padding is still
+dynamic per-batch, not fixed to `max_seq_len`=384, after the fix.
+
+**Notebook-wide search for the same pattern, as requested -- not fixed, only reported:**
+grepped every cell's source for `apply_chat_template` and for `tokenize=True`. Three
+occurrences of `apply_chat_template` besides the one just fixed:
+- **Cell 14** (markdown, step 7's intro): a **prose mention** of
+  `apply_chat_template(return_assistant_tokens_mask=True)` describing the rejected
+  `assistant_only_loss` mechanism -- not executable code.
+- **Cell 15** (code, step 7's masking-verification cell): two real calls, both already
+  `tokenize=False` (fixed in the step-08 masking-cell correction). A comment in this same
+  cell mentions `tokenize=True` in prose, describing the *old, already-fixed* bug -- also not
+  executable code.
+- **Cell 29** (code, `generate_one()` -- defined in step 11's "5 generated outputs" sub-cell,
+  and reused as-is by step 16's post-train preview, cell 77bb77ef): **one real call with
+  `tokenize=True`**, combined with `add_generation_prompt=True` and `return_tensors="pt"`:
+  ```python
+  prompt_ids = tokenizer.apply_chat_template(
+      prompt_messages, tokenize=True, add_generation_prompt=True, return_tensors="pt",
+  ).to(model.device)
+  ```
+  This is the **one remaining live occurrence of the exact pattern that has now broken this
+  notebook three times.** Not changed in this step, per instruction ("do not change them
+  yet, just list them"). Whether `return_tensors="pt"` changes `apply_chat_template`'s return
+  type enough to make this particular call safe is **not verified** -- it needs `torch`,
+  which is not installed locally, so it could not be checked the way the other two bugs were
+  before being reported. Flagged here as the most likely fourth instance of this bug class,
+  for the user to decide whether to fix preemptively or wait and see if it breaks on Colab
+  like the previous two did.
+
+**Files changed:** `notebooks/train_qlora.ipynb` only (cell `bf028e69` / step 8). No other
+file touched, no dependency added.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import json, ast; nb = json.load(open('notebooks/train_qlora.ipynb', encoding='utf-8')); [ast.parse(''.join(l for l in ''.join(c['source']).splitlines(keepends=True) if not l.strip().startswith('!'))) for c in nb['cells'] if c['cell_type']=='code']; print('ok', len(nb['cells']), 'cells')"
+```
+The local before/after comparison (dict-wrapped-in-dict vs. plain list, and the two different
+padded batch lengths) is reproducible with the Qwen tokenizer alone, no GPU -- same as the
+30/30-vs-30/30 comparison in step-08, not committed as a script of its own.
+
+Still did not run any training, locally or otherwise. `generate_one()`'s `tokenize=True` call
+(cell 29) remains an open, unverified risk -- flagged, not fixed.
+
+**Next step: still step-08's own Colab run, now also covering this cell-17 fix and the
+open question about cell 29's `generate_one()`.**
