@@ -1637,3 +1637,77 @@ Still did not run any training, locally or otherwise. `generate_one()`'s `tokeni
 
 **Next step: still step-08's own Colab run, now also covering this cell-17 fix and the
 open question about cell 29's `generate_one()`.**
+
+## step-10: fix build_trainer() crash -- trl 1.13.0's SFTConfig dropped max_seq_length and warmup_ratio
+
+**What was built:** two fixes to `notebooks/train_qlora.ipynb`, both driven by a real probe
+of the installed `SFTConfig` class on Colab (trl 1.13.0, transformers 5.17.0), not guessed --
+the probe found 133 total fields, of which exactly 2 of the 28 kwargs this notebook passes
+are rejected.
+
+**The crash, from a real Colab run:**
+```
+TypeError: SFTConfig.__init__() got an unexpected keyword argument 'warmup_ratio'
+```
+
+**1. `max_seq_length` -> `max_length` (straight rename).** The probe found no field
+containing "seq" anywhere in `SFTConfig`'s 133 fields; the only length-related fields are
+`max_grad_norm` (gradient clipping), `max_steps` (training length), `length_column_name` (a
+grouping column name), and `max_length` -- by elimination, `max_length` is the sequence-length
+limit. Same value (`config["max_seq_len"]`), just the kwarg name changed. Fixed in both
+places `SFTConfig` is constructed (see item 3).
+
+**2. `warmup_ratio` -> computed `warmup_steps` (not a plain rename -- no field contains
+"ratio" at all).** `warmup_steps` exists (default 0), so the ratio has to be converted to an
+absolute step count. Done inside `build_trainer()` (cell 21), computed fresh **per call**
+because the smoke test (`max_steps=100`) and the full run (~2,450 steps) are very different
+lengths -- a single fixed `warmup_steps` would be wrong for one of them:
+- `max_steps` given (smoke test): `total_steps = max_steps`.
+- otherwise (full run): `effective_batch = per_device_train_batch_size *
+  gradient_accumulation_steps`; `steps_per_epoch = ceil(len(train) / effective_batch)`;
+  `total_steps = steps_per_epoch * resolved_num_train_epochs` (the override if one was
+  passed to this call, else `config["num_train_epochs"]`).
+- `warmup_steps = max(1, round(warmup_ratio * total_steps))` when `warmup_ratio > 0`, else 0.
+
+`train/config.yaml` keeps `warmup_ratio` unchanged -- it stays the human-meaningful knob; the
+conversion is entirely inside `build_trainer()`, with a comment explaining trl 1.13.0 dropped
+`warmup_ratio` and why the conversion exists. `build_trainer()` now **prints the resolved
+values before constructing `SFTConfig`** (e.g. `warmup: ratio 0.03 x 2450 total steps ->
+warmup_steps=74`) -- a silently-computed number is exactly how a wrong one would survive an
+entire run unnoticed, per the instruction.
+
+**3. Notebook-wide search for every other `SFTConfig`/`TrainingArguments` construction, as
+requested.** Grepped every cell's source for `SFTConfig(` and `TrainingArguments(`. Exactly
+three hits:
+- **Cell 14** (markdown, step 7's intro) -- two **prose mentions**
+  (`SFTConfig(assistant_only_loss=True)`, `SFTConfig(completion_only_loss=True)`), not
+  executable code.
+- **Cell 21** (`build_trainer()`, step 10) -- the main constructor, fixed as described above.
+- **Cell 36** (`evaluate_checkpoint_on_full_val()`, step 14's checkpoint-selection cell,
+  flagged by name in the instruction as a known second instance) -- its `eval_only_config`
+  had `max_seq_length` (renamed to `max_length`) but never passed `warmup_ratio` in the first
+  place (it's eval-only, no training happens there), so only the rename was needed.
+
+No other `SFTConfig`/`TrainingArguments` constructions exist anywhere else in the notebook.
+
+**Could not be run or tested** -- needs a GPU, none available locally, per the instruction.
+Verified only that the notebook is still valid JSON and every code cell (including both
+edited ones) parses as valid Python via `ast.parse`.
+
+**Files changed:** `notebooks/train_qlora.ipynb` only -- cell `bd4e2eff` (step 10 markdown,
+documents the rename + conversion), cell `10d625b9` (`build_trainer()`), cell `4dfb2574`
+(`evaluate_checkpoint_on_full_val()`). No other file touched, no dependency added.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import json, ast; nb = json.load(open('notebooks/train_qlora.ipynb', encoding='utf-8')); [ast.parse(''.join(l for l in ''.join(c['source']).splitlines(keepends=True) if not l.strip().startswith('!'))) for c in nb['cells'] if c['cell_type']=='code']; print('ok', len(nb['cells']), 'cells')"
+```
+
+Still did not run any training, locally or otherwise -- this fix is unverified until run on
+Colab, same as every GPU-dependent part of this notebook. The open item from step-09 (cell
+29's `generate_one()`, the one remaining live `apply_chat_template(tokenize=True)` call) is
+still open -- not touched in this step.
+
+**Next step: still the same Colab run this notebook has been waiting on since step-08 --
+now covering the step-09 padding fix and this step-10 SFTConfig fix together, plus the still-open
+`generate_one()` question from step-09.**
