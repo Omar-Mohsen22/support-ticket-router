@@ -1768,3 +1768,152 @@ remains untouched and unconfirmed either way.
 **Next step: re-run the smoke test on Colab with this fix in place. If it completes, that
 also newly exercises `generate_one()` for the first time (step 11's "5 generated outputs"
 cell) -- worth watching specifically for the step-09 open item.**
+
+## step-12: self-verifying dtype fix for the smoke-test crash, plus the real root cause found by reading trl's installed source
+
+**Step-11's fix did not work.** The identical crash recurred on a real T4 Colab run:
+```
+NotImplementedError: "_amp_foreach_non_finite_check_and_unscale_cuda" not implemented for 'BFloat16'
+```
+raised from `torch/amp/grad_scaler.py`, `_unscale_grads_`, during `smoke_trainer.train()`.
+
+**Measured, not assumed -- the dtype census taken from the live loaded model before any of
+this step's fix:**
+```
+trainable (LoRA) params : {'torch.bfloat16': 392}     <-- all 392 of them
+all params              : {'torch.float32': 58, 'torch.uint8': 196,
+                           'torch.float16': 84, 'torch.bfloat16': 392}
+model.config.dtype      : torch.bfloat16   (Qwen2.5's own config.json value)
+model.dtype              : torch.float32
+```
+Environment this was measured on: `torch 2.11.0+cu128, transformers 5.17.0, trl 1.13.0,
+peft 0.20.0, bitsandbytes 0.50.2`, GPU Tesla T4 (compute capability 7.5) -- so `USE_BF16` is
+correctly `False`, `COMPUTE_DTYPE` is correctly `torch.float16`, and `SFTConfig` correctly
+receives `bf16=False, fp16=True`.
+
+**Two fixes already tried, both recorded here so a future session does not retry them:**
+1. Adding `dtype=COMPUTE_DTYPE` to `AutoModelForCausalLM.from_pretrained` (step-11, already
+   committed) -- **did not fix it**. The identical error still occurred.
+2. Casting every bfloat16 parameter to float16 in place after loading, then rebuilding the
+   trainer -- **inconclusive, not proof of failure**: not fully certain this was executed in
+   the right cell order, so it doesn't rule the approach out on its own merits, only as
+   attempted.
+
+### The real root cause -- found by reading the actual installed source, not guessed
+
+peft 0.20.0 and trl 1.13.0 are not installed in this local environment (no GPU here, so
+they'd never previously been needed locally). Installed both, read-only, into this session's
+scratchpad directory (`pip install --target <scratchpad>/pkg_inspect --no-deps peft==0.20.0
+trl==1.13.0` -- exact versions matching the Colab probe; **not** added to the project's
+`requirements.txt` or venv, purely for reading source files) to answer this properly instead
+of speculating. Also downloaded the `bitsandbytes==0.50.2` wheel (Windows build, since that's
+what resolves locally -- only used to confirm the platform-independent Python-level
+`compute_dtype` attribute logic in `bitsandbytes/nn/modules.py`, not to run anything).
+
+**Trace, in order:**
+1. `peft/tuners/lora/layer.py`'s `update_layer()` creates LoRA A/B as plain
+   `nn.Linear(self.in_features, r, bias=False)` -- no explicit `dtype`, so they start out
+   whatever `torch.get_default_dtype()` is at that moment.
+2. Immediately after, `_move_adapter_to_device_of_base_layer()` is supposed to cast them to
+   match the base layer's dtype. For a bnb-quantized layer specifically,
+   `peft/tuners/tuners_utils.py`'s `_get_base_layer_device_and_dtype()` does:
+   ```python
+   if hasattr(base_layer, "compute_dtype"):  # bnb Linear4bitLt
+       dtype = base_layer.compute_dtype
+   ```
+   -- i.e. for bnb layers, the LoRA adapter's dtype is meant to track
+   `bnb_4bit_compute_dtype`, not `dtype=` on `from_pretrained`. Confirmed via
+   `transformers/integrations/bitsandbytes.py` (installed locally, matches the pinned
+   5.17.0) that `bnb_4bit_compute_dtype` from `BitsAndBytesConfig` **is** threaded through
+   correctly to each `bnb.nn.Linear4bit(..., compute_dtype=quantization_config.bnb_4bit_compute_dtype, ...)`
+   at model-construction time -- so per this code path alone, LoRA params should end up
+   `float16` on this T4 (`bnb_4bit_compute_dtype=COMPUTE_DTYPE=torch.float16`), not
+   `bfloat16`. **This does not, by itself, explain the measured census** -- flagged
+   explicitly rather than papered over, because the actual explanation is downstream:
+2. **`trl/trainer/sft_trainer.py`, `SFTTrainer.__init__`, found verbatim:**
+   ```python
+   # When using QLoRA, the PEFT adapter weights are converted to bf16 to follow the
+   # recommendations from the original paper (see https://huggingface.co/papers/2305.14314,
+   # paragraph 3). Normally, this can be done by passing `autocast_adapter_dtype=False` to
+   # `get_peft_model`, but this option is not yet supported for quantized models. See:
+   # https://github.com/huggingface/peft/issues/2889
+   if _is_quantized_model:
+       for param in model.parameters():
+           if param.requires_grad:
+               param.data = param.data.to(torch.bfloat16)
+   ```
+   This is **unconditional** for any quantized model -- it does not check
+   `args.bf16`/`args.fp16`, does not check the GPU's actual bf16 support, and runs whether or
+   not the model was already a `PeftModel` passed in with no `peft_config` (this notebook's
+   case: LoRA is attached in the model-loading cell, well before `SFTTrainer` is ever
+   constructed). **This is the real, confirmed mechanism**: whatever dtype the LoRA
+   parameters had right up until `SFTTrainer(...)` is constructed, trl overwrites them all to
+   `bfloat16` at that point, by design (a QLoRA-paper recommendation), not a bug in trl. It
+   is simply wrong for a T4, which has no bf16 support and therefore trains under fp16 mixed
+   precision, whose `GradScaler` cannot unscale bfloat16 gradients -- exactly the crash.
+
+This fully explains why step-11's `dtype=COMPUTE_DTYPE` fix did nothing: that kwarg affects
+model construction, which happens *before* `SFTTrainer.__init__` runs its unconditional
+cast -- anything set earlier is simply overwritten.
+
+### The fix: self-verifying, applied twice, not a single-cause patch
+
+Per the instruction, built to catch and correct this regardless of exactly where in the
+pipeline it recurs, rather than patch only the one mechanism found above:
+
+1. **Model-loading cell (step 9, `notebooks/train_qlora.ipynb`)**: after `get_peft_model(...)`,
+   a new `normalize_bfloat16_params(model, target_dtype, label)` helper casts every
+   `torch.bfloat16` parameter to `COMPUTE_DTYPE` (touches nothing else -- `float32` params
+   are left alone, since `prepare_model_for_kbit_training` deliberately upcasts layer norms
+   to fp32 for numerical stability, and `uint8` params are the packed 4-bit base weights),
+   prints a `collections.Counter` before/after census, then hard-asserts no `bfloat16`
+   parameter remains, **printing the offending parameter NAMES** (not just a count) if any
+   do. Failure message: `STOP: do not train until this is fixed`.
+2. **`build_trainer()` (step 10)**: after constructing `SFTTrainer(...)` (now assigned to a
+   local `sft_trainer` instead of returned immediately), the **same** `normalize_bfloat16_params`
+   runs again on `sft_trainer.model` -- the model the trainer actually holds -- right before
+   `build_trainer` returns it. Also prints `sft_config.fp16`, `sft_config.bf16`, and
+   `sft_trainer.accelerator.mixed_precision`, so an independently-bf16-selecting `accelerate`
+   (a different bug the user flagged as a real possibility) would be visible too, distinct
+   from this one.
+
+   **Deliberate deviation from a literal reading of the instruction, flagged explicitly**:
+   the instruction described step 10's check as a "census + named check" (i.e. assert-only,
+   mirroring step 9's assert but without a second cast). Given the confirmed root cause above
+   -- `SFTTrainer.__init__` unconditionally re-casts to bfloat16 for *any* quantized model,
+   every single time -- an assert-only check at that point would fail on every run with no
+   path to actually train. So step 10 calls the exact same cast-census-assert function used
+   in step 9, a second time, rather than a bare assertion. This is flagged here rather than
+   applied silently.
+3. **`train/config.yaml`**: new `disable_mixed_precision` (default `false`), documented as a
+   last-resort fallback, not the intended path. When `true`, `build_trainer` passes
+   `bf16=False, fp16=False` for both the smoke test and the full run, so no `GradScaler` is
+   ever constructed -- training runs in plain fp32 instead. Comment states plainly: slower,
+   more memory, may OOM on a T4's 15GB VRAM.
+
+**Files changed:** `notebooks/train_qlora.ipynb` (step 9's model-loading cell, step 9's
+markdown, step 10's `build_trainer()`, step 10's markdown), `train/config.yaml`
+(`disable_mixed_precision`). No other file touched. **No project dependency added** --
+`peft`/`trl`/`bitsandbytes` were installed read-only into this session's scratchpad for
+source inspection only, never into the project venv or `requirements.txt`.
+
+**Could not be run or tested** -- needs a GPU and `bitsandbytes`, neither available locally.
+Verified only that the notebook is still valid JSON and every code cell (including both
+edited ones) parses as valid Python via `ast.parse`; verified `train/config.yaml` still
+parses via `yaml.safe_load` with `disable_mixed_precision: false` present.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import json, ast; nb = json.load(open('notebooks/train_qlora.ipynb', encoding='utf-8')); [ast.parse(''.join(l for l in ''.join(c['source']).splitlines(keepends=True) if not l.strip().startswith('!'))) for c in nb['cells'] if c['cell_type']=='code']; print('ok', len(nb['cells']), 'cells')"
+.venv\Scripts\python.exe -c "import yaml; c = yaml.safe_load(open('train/config.yaml')); print(c['disable_mixed_precision'])"
+```
+
+Still did not run any training end-to-end. Whether this fix actually gets the smoke test past
+the point step-11 also failed at is unverified until the next Colab attempt. The step-09 open
+item (`generate_one()`'s `apply_chat_template(tokenize=True)` call, cell 29) remains untouched.
+
+**Next step: re-run the smoke test on Colab. Watch specifically for: (a) whether training
+now proceeds past the point of the previous crash, (b) the printed dtype censuses at both
+checkpoints matching expectations (all-float16 after normalization, zero bfloat16 offenders),
+and (c) whether `accelerator.mixed_precision` printed in build_trainer ever disagrees with
+`sft_config.bf16` -- which would mean the "different bug" the user flagged is real.**

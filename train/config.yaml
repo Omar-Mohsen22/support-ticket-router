@@ -48,6 +48,24 @@ quantization:
   # "GPU detected / compute dtype chosen" line at the top of the notebook's output.
   bnb_4bit_use_double_quant: true
 
+# --- Mixed precision fallback (NOT the intended path -- see notebook step 10) ------------------
+# MEASURED on a real T4 Colab run: the smoke test died with
+#     NotImplementedError: "_amp_foreach_non_finite_check_and_unscale_cuda" not
+#     implemented for 'BFloat16'
+# because the trainable LoRA parameters ended up torch.bfloat16 despite bnb_4bit_compute_dtype
+# and dtype=COMPUTE_DTYPE both being set correctly -- confirmed by reading trl 1.13.0's
+# installed source: SFTTrainer.__init__ unconditionally casts every trainable parameter to
+# bfloat16 for a quantized model (a documented QLoRA-paper recommendation in trl, not a bug
+# there), regardless of args.bf16/args.fp16. See PROGRESS.md's step-12 entry for the full
+# trace. The notebook's model-loading cell and build_trainer() now both normalize this back to
+# COMPUTE_DTYPE and hard-assert it stuck -- disable_mixed_precision below is the LAST-RESORT
+# fallback if that self-verifying fix is ever wrong for a reason not yet seen. When true,
+# build_trainer passes fp16=False and bf16=False, so training runs in plain fp32 and torch's
+# GradScaler is never constructed at all, removing this entire class of failure. This is
+# SLOWER and uses MORE memory, and MAY OOM on a T4's 15GB VRAM -- a fallback, not the intended
+# path.
+disable_mixed_precision: false
+
 # --- LoRA --------------------------------------------------------------------------
 lora:
   r: 16
