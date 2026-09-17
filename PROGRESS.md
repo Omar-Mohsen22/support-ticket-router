@@ -2097,3 +2097,134 @@ step 14 running again.
 real test of whether the resumable cache actually saves the already-scored work -- report
 back whether `full_val_losses.json` existed on Drive and had the expected partial contents
 when the session reconnects.**
+
+## step-15: third predictor -- the fine-tuned QLoRA adapter, scored on the same harness
+
+**What was built:** `src/ticket_router/predictors/adapter_predictor.py`, the third predictor
+`evaluate.py` can score, alongside `api_predictor.py` (zero-shot/few-shot GPT-4o-mini) and
+`tfidf_baseline.py`. The adapter itself is done and on the Hub:
+`Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora` (private, base
+`Qwen/Qwen2.5-1.5B-Instruct`, LoRA r=16/alpha=32, pushed from checkpoint-1500 by step 15 of the
+notebook). This step writes the code to score it, not run it -- see "Could not be run" below.
+
+### Interface found, before writing anything (as instructed)
+
+Read `api_predictor.py`, `tfidf_baseline.py`, and `evaluate.py` first. The shared interface is
+the predictions JSONL row `evaluate.py`'s `load_predictions()` actually consumes:
+```
+{"id": <str>, "queue"/"priority"/"type": <str|null>,
+ "latency_ms": <float>, "input_tokens": <int>, "output_tokens": <int>, "cost_usd": <float|null>}
+```
+`id` must match a gold-split id (missing/non-string ids are dropped, counted separately, and
+never scored). `queue`/`priority`/`type` are re-validated by `evaluate.py` itself via
+`TicketLabels(**row)` -- a `ValidationError` (missing, `null`, or a value outside the allowed
+set) is how "invalid" is signaled; there is no separate flag field. The four numeric fields
+are recorded independent of label validity. An optional `"error"` field
+(`api_predictor.py`'s convention) is written for diagnostics but never read by `evaluate.py`.
+Scoring is always a separate step -- neither existing predictor calls `evaluate.py` itself.
+`api_predictor.py`'s caching pattern: one file per ticket under `.cache/<predictor>/`, keyed
+by a hash of the request-determining inputs + ticket id, output JSONL opened once and
+written+flushed as each row/batch completes. `tfidf_baseline.py`'s convention for
+non-per-request work: when generation happens in a batch, `latency_ms` is the batch's total
+time divided evenly across its rows, documented as batch-averaged, not individually measured.
+**Nothing in this interface was changed; `evaluate.py` was not touched.**
+
+### The six requirements, and how each was met
+
+1. **4-bit loading + adapter attachment, config-driven, not hardcoded.** `base_model` and
+   `hub_model_id` (already `Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`) and the
+   `quantization` block (`load_in_4bit`, `bnb_4bit_quant_type`, `bnb_4bit_use_double_quant`)
+   are all **reused directly from `train/config.yaml`** -- the same file
+   `notebooks/train_qlora.ipynb` reads -- rather than duplicated into a second config, so
+   there is exactly one place any of it can go stale. `bnb_4bit_compute_dtype` is
+   deliberately still NOT in config, matching `train/config.yaml`'s existing reasoning
+   exactly: `pick_compute_dtype()` reproduces the notebook's own cell-1 GPU-capability check
+   (bfloat16 on compute capability major>=8, float16 otherwise) at runtime, since which GPU
+   this predictor runs on isn't decided any more than the notebook's was.
+2. **Prompt rendered exactly like training.** `render_prompt()` builds
+   `[{"role": "system", "content": system_message}, {"role": "user", "content": ticket_text}]`
+   using `build_system_message()` **imported directly from `make_sft_dataset.py`** (not
+   re-typed a third time -- `api_predictor.py` and `make_sft_dataset.py` each already have
+   their own copy of a similar builder; importing here stops that from becoming a third,
+   independently-driftable copy for the one predictor where prompt-exactness is the entire
+   point). Rendered via `apply_chat_template(tokenize=False, add_generation_prompt=True)`,
+   then tokenized separately with `add_special_tokens=False` -- the exact pattern
+   `notebooks/train_qlora.ipynb` settled on after two real, reproducible bugs from
+   `apply_chat_template(tokenize=True)` (PROGRESS.md's step-09 and step-13 entries), used
+   here for the identical reason, not as a style choice.
+3. **Deterministic decoding.** `do_sample=False` in the one `model.generate()` call.
+4. **Batched generation, left padding, config-driven batch size.**
+   `tokenizer.padding_side = "left"` set once after loading (inference-only script, never
+   trains, so no conflict with training's right-padding). `batch_size` and `max_new_tokens`
+   are new `train/config.yaml` keys under `inference:` -- not CLI flags, per the instruction
+   ("a config value") -- so the batch size is tunable without touching code once the actual
+   GPU is known.
+5. **Streamed, resumable output.** Per-ticket disk cache under `.cache/adapter_predictor/`,
+   keyed by a hash of `(adapter_repo_id, exact rendered prompt text, ticket_id)` -- mirrors
+   `api_predictor.py`'s `call_with_cache` pattern exactly, per the instruction. The output
+   JSONL is opened once and every batch's rows are written and flushed immediately after that
+   batch completes (not buffered to the end), so a crash loses at most the batch in flight,
+   and a re-run replays every already-cached ticket for free rather than re-generating.
+6. **Invalid outputs recorded, never retried or repaired.** `parse_and_validate()` gets
+   exactly one `json.loads()` + one `TicketLabels(**parsed)` attempt per ticket -- unlike
+   `api_predictor.py`'s `MAX_CONTENT_RETRIES`, there is no retry loop here at all, per the
+   instruction (the invalid-output rate is a reported harness metric; repairing it here would
+   falsify what a real deployment's rate would actually be). Catches `(TypeError,
+   ValidationError)`, not just `ValidationError` -- `TypeError` covers valid-JSON-but-not-an-
+   object output (e.g. the model emitting a bare string or a list), the same edge case
+   `api_predictor.py`'s own `except` clause already guards against; missed on the first pass
+   here and added after re-reading `api_predictor.py`'s exact exception tuple a second time.
+
+### Two other things fixed on review, before committing
+
+- The same `TypeError` gap above.
+- An unused `TARGET_FIELDS` module constant (declared to match the other two predictors'
+  style, never actually referenced) -- wired into both the per-ticket `result` dict
+  construction and the output-row construction instead of leaving it as dead code.
+
+### New dependencies -- named and justified, per the project's rule
+
+`requirements.txt`: `pyyaml==6.0.3` (already present transitively via
+`huggingface_hub`/`transformers`, now a direct, declared dependency since this script reads
+`train/config.yaml` itself), `peft==0.20.0` and `bitsandbytes==0.50.2` (pinned to the exact
+versions the adapter was trained with on Colab, to avoid a version-mismatch loading
+difference), `torch` (deliberately unpinned -- identical reasoning to
+`notebooks/train_qlora.ipynb`'s install cell: the correct build is tied to whatever GPU/CUDA
+this actually ends up running on, not this repo's business to guess). `.env.example`: new
+`HF_TOKEN` entry -- the adapter repo is private, so a token is required; the script `STOP`s
+with a clear message if it's unset, same pattern as `api_predictor.py`'s
+`OPENAI_API_KEY`/`OPENAI_MODEL` check.
+
+**Files changed:** `src/ticket_router/predictors/adapter_predictor.py` (new),
+`train/config.yaml` (new `inference:` section: `batch_size`, `max_new_tokens`),
+`requirements.txt` (4 new lines, see above), `.env.example` (`HF_TOKEN`). `evaluate.py` was
+**not** touched, per the instruction.
+
+**Could not be run or tested** -- needs a CUDA GPU with bitsandbytes 4-bit support, neither
+available locally (confirmed: `torch`/`peft`/`bitsandbytes` are not installed in this local
+venv). Verified what could actually be checked without one: `ast.parse` and `py_compile` both
+pass; every import that doesn't require the GPU stack was independently confirmed to resolve
+correctly in this venv (`build_system_message` importable and callable, `TicketLabels`
+importable, `yaml`/`dotenv`/`pandas` all present) by importing the module directly and
+confirming it fails at exactly `import torch` and nowhere earlier -- not a general assumption
+that the rest is fine, an actual check of where the import chain breaks. `train/config.yaml`
+re-parses with the new `inference:` section present and correctly typed.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import ast; ast.parse(open('src/ticket_router/predictors/adapter_predictor.py', encoding='utf-8').read()); print('syntax OK')"
+.venv\Scripts\python.exe -m py_compile src\ticket_router\predictors\adapter_predictor.py
+.venv\Scripts\python.exe -c "import sys; sys.path.insert(0,'src'); import ticket_router.predictors.adapter_predictor" # expected: ModuleNotFoundError: No module named 'torch', nothing earlier
+.venv\Scripts\python.exe -c "import yaml; c = yaml.safe_load(open('train/config.yaml')); print(c['inference'])"
+```
+
+Not run end to end. Once a GPU is available: `pip install -r requirements.txt` (now pulls
+torch/peft/bitsandbytes too), set `HF_TOKEN` in `.env`, then
+`python src/ticket_router/predictors/adapter_predictor.py --split test --run-name adapter-qlora`
+followed by the same `evaluate.py --predictions results/adapter-qlora.predictions.jsonl
+--split test --run-name adapter-qlora` used for the other two runs, to get it into
+`results/comparison.md` alongside them.
+
+**Next step: run `adapter_predictor.py` on a real GPU, then `evaluate.py` on its output, and
+compare against `api-gpt4o-mini-full-test` and `tfidf-baseline` in `results/comparison.md` --
+the comparison this whole fine-tuning effort (steps 06-15) was building toward.**

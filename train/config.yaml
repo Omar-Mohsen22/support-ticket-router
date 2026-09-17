@@ -222,3 +222,19 @@ hub_private: true
 output_dir: outputs/qlora-run
 smoke_test_output_dir: outputs/qlora-smoke-test
 adapter_output_dir: outputs/qlora-adapter
+
+# --- Inference (src/ticket_router/predictors/adapter_predictor.py) -----------------------------
+# Scores the fine-tuned adapter (hub_model_id above, loaded on top of base_model with the SAME
+# quantization block above) on the harness, the same way api_predictor.py and tfidf_baseline.py
+# were scored. Nothing about the adapter itself, the base model, or the 4-bit settings is
+# repeated here -- they're read from the sections above, so there is exactly one place that can
+# go stale.
+inference:
+  # GPU-dependent -- which GPU this predictor actually runs on isn't decided yet, so this must
+  # be tunable without editing code. Left conservative; raise it on a GPU with more VRAM.
+  batch_size: 8
+  # A generous cap for the minified JSON completion this model was trained to produce (observed
+  # ~17-20 tokens per completion in the notebook's own masking-verification examples --
+  # PROGRESS.md's step-07 entry). Generation always stops early at the model's own end-of-turn
+  # token if it's shorter; this is a ceiling, not a target length.
+  max_new_tokens: 64
