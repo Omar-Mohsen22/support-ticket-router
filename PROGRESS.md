@@ -2001,3 +2001,99 @@ produced at least one checkpoint, which itself depends on step-12's fix working)
 five-in-a-row pattern of assumed-API-surface breaks, treat any further crash in this notebook
 as likely to be the same class of bug (an API this notebook was written against no longer
 matching the actually-installed trl/transformers/peft) before assuming anything else.**
+
+## step-14: make checkpoint selection resumable, and add a no-training recovery path after a disconnect
+
+**Not an API break this time -- the same durability bug already fixed once, left exposed a
+second place.** Step 14's checkpoint-selection loop evaluated 9 of its 10 checkpoints on the
+full validation set (~40 minutes on a T4), Colab disconnected during the 10th, and re-running
+started from checkpoint-250 again -- all 9 already-scored checkpoints' `eval_loss` values were
+gone, because `full_val_losses` was a plain in-memory `dict`, never written anywhere. This is
+exactly the "work not written to durable storage does not survive a disconnect" failure
+step-08 already fixed for the training loop itself (`resume_from_checkpoint`) -- just left
+open in this second loop.
+
+### 1. Resumable cache, written inside the loop -- not after it
+
+`notebooks/train_qlora.ipynb`'s checkpoint-selection cell (`evaluate_checkpoint_on_full_val`
++ the scoring loop) now caches each checkpoint's full-val loss to
+`f"{full_output_dir}/full_val_losses.json"` (on Drive, since `full_output_dir` lives under
+`REPO_ROOT` which defaults to Drive as of step-08) via `json.dump(...)` **immediately after
+that checkpoint is scored, inside the loop body** -- not collected and written once after the
+loop. On entry, the cache is loaded if present and any checkpoint already in it is skipped,
+printing the cached value (`SKIPPED -- cached FULL-val eval_loss = ...`) so it's visible which
+ones were reused. The final best-checkpoint selection was changed from
+`min(full_val_losses, key=full_val_losses.get)` to
+`min(checkpoint_dirs, key=lambda cd: full_val_losses[cd])` -- restricts the comparison to
+checkpoints that actually exist right now, so a stale cache entry for a checkpoint that no
+longer exists (or came from a different `output_dir`) can't silently win.
+
+**Commented explicitly against regression, per the instruction**: the write sits inside the
+`for ckpt_dir in checkpoint_dirs:` loop body with a comment stating plainly that a future edit
+moving the `json.dump` call to after the loop "to tidy it up" would silently reintroduce this
+exact bug -- the loop-body placement is the fix, not an implementation detail to be refactored
+away later.
+
+### 2. Staleness warning at cache-load time
+
+When an existing `full_val_losses.json` is loaded, a printed `WARNING` states plainly that the
+cached numbers are only valid for the exact version of `evaluate_checkpoint_on_full_val()`
+that produced them -- if that function changes (dtype normalization, eval batch size,
+`max_length`, anything), the cache file must be deleted first, or a re-run would silently mix
+results computed by two different code versions. Framed explicitly as the same class of
+mistake as the two prior stale-file incidents in this project: `data/README.md` regenerated
+by hand going stale against its own generator (step-02 corrections), and a stale
+`train/config.yaml` sitting on Drive (step-08's `REPO_ROOT` default-to-Drive fix exists partly
+because of exactly this risk).
+
+### 3. Recovery cell: rebuild `trainer`/`full_output_dir` after a disconnect, without re-training
+
+New markdown + code cell pair, inserted between step 13's loss-curve cell and step 14's
+markdown: `full_output_dir = f"{REPO_ROOT}/{config['output_dir']}"` and
+`trainer = build_trainer(output_dir=full_output_dir, eval_dataset=eval_subsample)` -- no
+`.train()` call. `trainer`/`full_output_dir` only exist in memory if the full-training cell
+ran in *this* session; after a disconnect they don't, even though the checkpoints themselves
+survived on Drive, and re-running training from scratch to get two variables back would waste
+the very checkpoints step-08's resumability exists to protect. Step 14's markdown was updated
+to say explicitly: run the recovery cell instead of re-running step 13's training cell, if
+`trainer`/`full_output_dir` are missing. The recovery cell's own markdown notes it still
+requires step 9 (model loading + LoRA attach) to have run this session -- that step is fast
+(a few minutes) and, by design (see step-08's `REPO_ROOT` reasoning), always reloads the base
+model fresh from the Hub rather than trying to cache it, so it isn't itself a candidate for
+this kind of resumability.
+
+### Tooling note: still working around `NotebookEdit`/`Read` being blocked on this notebook
+
+Same constraint as step-13: `Read` on `notebooks/train_qlora.ipynb` still fails outright
+(exceeds the 25,000-token limit, `offset`/`limit` have no effect for `.ipynb` rendering), so
+`NotebookEdit` remains unusable. All of this step's edits (two cell insertions, one markdown
+rewrite, one code cell rewrite) were made with a Python script
+(`json.load` -> locate cells by `id` -> mutate `"source"` / `cells.insert(...)` -> `json.dump`
+back) run via `Bash`, the same workaround as step-13. Verified afterward with `git diff` --
+confirmed the change is exactly the intended edits, nothing else touched, all cell `id`s
+remain unique.
+
+**Files changed:** `notebooks/train_qlora.ipynb` only -- new recovery markdown+code cell pair,
+step 14's markdown (`8f4cfd63`), step 14's code cell (`4dfb2574`). No other file touched, no
+dependency added.
+
+**Could not be run or tested** -- needs a GPU, none available locally, per the instruction.
+Verified only that the notebook is still valid JSON (43 cells now, all unique ids) and every
+code cell parses as valid Python via `ast.parse`.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import json, ast; nb = json.load(open('notebooks/train_qlora.ipynb', encoding='utf-8')); [ast.parse(''.join(l for l in ''.join(c['source']).splitlines(keepends=True) if not l.strip().startswith('!'))) for c in nb['cells'] if c['cell_type']=='code']; print('ok', len(nb['cells']), 'cells')"
+```
+
+Still did not run any training end-to-end. Whether the resumable cache and the recovery cell
+actually behave as designed is unverified until the next Colab attempt -- specifically worth
+watching: that the cache file appears under `full_output_dir` on Drive after the first
+checkpoint is scored (not just at the end), that a deliberate re-run correctly skips cached
+checkpoints, and that the recovery cell alone (without re-running step 13) is enough to get
+step 14 running again.
+
+**Next step: re-run on Colab. If a disconnect happens again during step 14, this is the first
+real test of whether the resumable cache actually saves the already-scored work -- report
+back whether `full_val_losses.json` existed on Drive and had the expected partial contents
+when the session reconnects.**
