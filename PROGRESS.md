@@ -2498,3 +2498,126 @@ first, change nothing beyond the hash check itself).
 settled, `evaluate.py` can be re-run for the 7 existing entries to backfill their `gold_split`
 hashes (a pure bootstrap -- there is nothing to compare the first backfilled entry against),
 and then `adapter_predictor.py` still needs a real GPU run (step-15).**
+
+## step-18: three decisions from the step-17 report -- commit the split files, mark the known-bad run superseded, make the random baseline order-independent
+
+**Checked for conflicts before touching anything, per the instruction.** Found one real,
+necessary knock-on fix (below); everything else was clear. `val.parquet` was verified to
+regenerate identically too (same check as step-17's `test.parquet`, using the scratch output
+already on disk from that step) before committing it.
+
+### 1. Committed `data/processed/test.parquet` and `data/processed/val.parquet`; `train.parquet` stays gitignored
+
+`.gitignore`: added `!data/processed/test.parquet` and `!data/processed/val.parquet` next to
+the existing `!data/processed/label_map.json` exception, with the sharper reasoning recorded
+in the comment there: `make_dataset.py` is now PROVEN deterministic (step-17), so anyone WITH
+the raw CSVs could regenerate all three splits identically -- but the raw CSVs are 53MB and
+ALSO gitignored, so a person cloning this repo cannot verify a single published number without
+first obtaining the source dataset. `test.parquet` is the literal denominator of every number
+in `results/comparison.md`/`README.md`; `val.parquet` is what the step-14 checkpoint decision
+was made on. `train.parquet` only affects reproducing the ~3-hour GPU training run, which
+nobody re-runs to check a claim -- stays gitignored. 1.19 MB total (`test.parquet` 618 KB,
+`val.parquet` 604 KB -- `ls -la` confirmed) buys full verifiability of every number in the
+README, the same principle that already un-gitignored `label_map.json` (step-02 correction).
+`git add`ed both files.
+
+### 2. `api-gpt4o-mini-50` marked superseded in `results.json`, excluded from the main table, listed separately
+
+Per the instruction: not deleted -- it's part of this project's own methodology story (the
+step-04 sampling-trap bug, preserved on disk exactly as it happened). Added a `"superseded"`
+key to its `results.json` entry (pure metadata addition -- every other field in the entry
+verified byte-identical to before, programmatically, same check used in step-16):
+```json
+"superseded": {
+  "reason": "... all 50 tickets in this run share a single queue value, \"Billing and
+             Payments\" -- the step-04 sampling-trap bug ...",
+  "superseded_by": "api-gpt4o-mini-full-test"
+}
+```
+`report.py`'s `build_comparison()` now partitions `all_results` into `comparable` (rendered in
+the main table, as before) and `superseded` (any entry with a `"superseded"` key) -- excluded
+from the main table entirely, then listed under a new `## Superseded runs (excluded from the
+comparison above)` heading with its reason and what to look at instead
+(`superseded_by`). Regenerated `results/comparison.md`/`README.md`: confirmed
+`api-gpt4o-mini-50` no longer appears in the main table and appears, with its explanation,
+under the new heading.
+
+### 3. `predict_random_baseline.py` made order-independent -- id-keyed, not position-keyed
+
+**Real root cause, precisely, per the instruction's own framing: seeding alone is not
+reproducibility.** `SEED=42` made the RNG's *draw sequence* deterministic, but the old code
+assigned draw `i` to whatever id sat at position `i` of `test.parquet` when the script ran
+(`sampled[field][i]` -> `target["id"][i]`) -- the *consumption order* was never pinned to
+anything about the data itself, only to file position. Fixed: new `sample_for_row(ticket_id,
+field, values, probs, seed)` seeds a fresh `np.random.default_rng` from
+`sha256(f"{seed}:{ticket_id}:{field}")` for every single (ticket, field) pair, independent of
+every other row and of the order `target["id"]` is iterated in. The single shared `rng =
+np.random.default_rng(SEED)` and its one `rng.choice(..., size=n)` call per field are gone
+entirely (not left as dead code -- removed, not just unused).
+
+**Order-independence verified directly, not just argued:** ran `sample_for_row` against
+`test.parquet` in its real order AND against a randomly-shuffled copy (`.sample(frac=1,
+random_state=999)`, a different seed than anything else in this project, specifically to rule
+out an accidental match) -- confirmed every ticket id maps to the exact same
+`{queue, priority, type}` prediction in both orders. This is the property being claimed, checked
+for real, not inferred from reading the code.
+
+**Re-run for real, re-scored, results.json updated -- numbers changed, method did not
+improve:**
+```
+                queue_f1   priority_f1   type_f1
+old (position)  0.1110     0.3427        0.2577
+new (id-keyed)  0.0996     0.3163        0.2444
+```
+Both are legitimate draws from the identical marginal distributions (`train.parquet`'s
+per-field class frequencies, unchanged) -- the shift is sampling noise from which specific
+draw each ticket happens to get under the new (correct) assignment, not a change in what the
+baseline is modeling or any kind of improvement/regression to read into. `evaluate.py`'s new
+step-17 hash check passed cleanly (no prior entry had a `gold_split` yet for `test`/`limit=None`
+-- the bootstrap case) and `random-baseline`'s entry now carries both `gold_split` and
+(unchanged) `run_meta`.
+
+**Knock-on fix, found while checking for conflicts, not left stale:** `src/ticket_router/leakage_check.py`
+hardcoded the OLD random-baseline macro-F1 values (`{"queue": 0.1110, "priority": 0.3427, "type":
+0.2577}`) as a fixed comparison reference in `decide_verdict()`. Left as-is, it would have
+silently gone stale the moment `random-baseline` above was re-scored -- exactly the class of
+bug this whole investigation (step-17/step-18) has been about. Fixed at the root instead of
+re-typing new numbers: new `load_random_baseline_f1()` reads the reference LIVE from
+`results/results.json` (`STOP`s with a clear message if the entry is missing, rather than
+guessing), so it can never drift from whatever `random-baseline` actually says again.
+Re-ran `leakage_check.py`: `reports/leakage_check.md` now shows the new reference numbers
+(0.0996/0.3163/0.2444); the verdict text's conclusion ("holds well above random -- consistent
+with real signal") is unchanged -- the fix changed the reference numbers, not the finding.
+
+**Other places the old numbers appear, deliberately NOT touched:** `PROGRESS.md`'s own earlier
+entries (step-03/step-04/step-04c) and `reports/prompting_notes.md` (step-05) are historical
+snapshots of what was true when written -- this project's established convention (e.g. the
+step-02 corrections) is to append a new entry describing a change, never rewrite an old one to
+match it. `README.md`/`results/comparison.md` needed no manual fix -- both are regenerated by
+`report.py`, which now reads the corrected `results.json` automatically.
+
+**Files changed:** `.gitignore`, `data/processed/test.parquet` (new, committed),
+`data/processed/val.parquet` (new, committed), `results/results.json` (`api-gpt4o-mini-50`
+superseded metadata; `random-baseline`'s metrics/`gold_split` updated),
+`src/ticket_router/report.py` (superseded-run partitioning), `src/ticket_router/predict_random_baseline.py`
+(id-keyed sampling), `src/ticket_router/leakage_check.py` (live reference instead of hardcoded),
+`reports/leakage_check.md` (regenerated), `results/comparison.md` + `README.md` (regenerated),
+`results/random-baseline.predictions.jsonl` (regenerated with the new, order-independent
+predictions). No dependency added (`hashlib` is stdlib, already used by `evaluate.py` since
+step-17).
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\predict_random_baseline.py
+.venv\Scripts\python.exe src\ticket_router\evaluate.py --predictions results\random-baseline.predictions.jsonl --split test --run-name random-baseline
+.venv\Scripts\python.exe src\ticket_router\leakage_check.py
+.venv\Scripts\python.exe src\ticket_router\report.py
+.venv\Scripts\python.exe -m pytest -q
+```
+`pytest -q`: 11/11 still passing throughout.
+
+**Next step: still run `adapter_predictor.py` on a real GPU (step-15) -- unaffected by this
+step. When it's scored, `evaluate.py`'s step-17 hash check will run against `random-baseline`'s
+(and every other run's) now-recorded `gold_split` hash automatically -- the 6 remaining
+comparable entries (all full-split, `limit=None`) still lack a recorded `gold_split` and will
+bootstrap theirs the first time each is next re-scored, same as `random-baseline` did here.**

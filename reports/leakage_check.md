@@ -110,8 +110,8 @@ Recomputed from `results/tfidf-baseline.predictions.jsonl` (not retrained), rest
 
 ## Verdict
 
-- **queue**: all-test=0.3683, low-sim-only=0.3558, random-baseline=0.1110 -> holds well above random -- consistent with real signal.
-- **priority**: all-test=0.5445, low-sim-only=0.5316, random-baseline=0.3427 -> holds well above random -- consistent with real signal.
-- **type**: all-test=0.8412, low-sim-only=0.8325, random-baseline=0.2577 -> holds well above random -- consistent with real signal.
+- **queue**: all-test=0.3683, low-sim-only=0.3558, random-baseline=0.0996 -> holds well above random -- consistent with real signal.
+- **priority**: all-test=0.5445, low-sim-only=0.5316, random-baseline=0.3163 -> holds well above random -- consistent with real signal.
+- **type**: all-test=0.8412, low-sim-only=0.8325, random-baseline=0.2444 -> holds well above random -- consistent with real signal.
 
 **All three fields hold up on the low-similarity subset.** The headline step-04b result is real: TF-IDF is learning genuine signal from the ticket text, not memorizing near-duplicate training tickets. The comparison against the zero-shot LLM baseline stands.

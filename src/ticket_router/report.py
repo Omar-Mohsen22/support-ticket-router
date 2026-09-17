@@ -62,7 +62,14 @@ def build_comparison(all_results: dict) -> str:
     training_notes = []  # (run_name, gpu_hours, note) for runs with a real training cost
     used_cost_bases = set()
 
-    for run_name, r in all_results.items():
+    # A "superseded" run (see ticket_router.evaluate/results.json's "superseded" key) is a
+    # KNOWN-BAD result -- kept in results.json for the project's own methodology record, never
+    # deleted, but excluded from the main comparison table: a reader must never see it sitting
+    # next to valid results with no explanation. Listed separately below instead.
+    superseded = {name: r for name, r in all_results.items() if r.get("superseded")}
+    comparable = {name: r for name, r in all_results.items() if not r.get("superseded")}
+
+    for run_name, r in comparable.items():
         run_meta = r.get("run_meta") or {}
         cost_basis = run_meta.get("cost_basis", "unknown")
         hardware = run_meta.get("hardware", "unknown")
@@ -85,11 +92,13 @@ def build_comparison(all_results: dict) -> str:
 
     lines = ["# Run comparison\n"]
     if not rows:
-        lines.append("_No runs recorded yet in results/results.json._\n")
-        return "\n".join(lines)
+        lines.append("_No comparable runs recorded yet in results/results.json._\n")
+    else:
+        lines.append(md_table(headers, rows))
+        lines.append("")
 
-    lines.append(md_table(headers, rows))
-    lines.append("")
+    if not rows and not superseded:
+        return "\n".join(lines)
 
     # --- Footnotes: a reader must not be able to read `0.0000` in the cost columns and
     # conclude a run is "free" in the same sense as any other run with a 0 -- see
@@ -123,6 +132,22 @@ def build_comparison(all_results: dict) -> str:
         "seconds of CPU time, not GPU-hours; see each such run's `training_cost.note` in "
         "`results/results.json` for the exact figure.\n"
     )
+
+    if superseded:
+        lines.append("## Superseded runs (excluded from the comparison above)\n")
+        lines.append(
+            "Kept in `results/results.json` for this project's own methodology record -- NOT "
+            "deleted -- but excluded from the table above because each one is a known-bad "
+            "result, not a fair comparison point. Do not read these numbers as competitive "
+            "with the runs above.\n"
+        )
+        for run_name, r in superseded.items():
+            sup = r["superseded"]
+            replacement = sup.get("superseded_by")
+            replacement_note = f" See `{replacement}` instead." if replacement else ""
+            lines.append(f"- **`{run_name}`** (`{r['split']}`, n={r['n_gold']}): {sup['reason']}{replacement_note}")
+        lines.append("")
+
     return "\n".join(lines)
 
 

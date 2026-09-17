@@ -28,6 +28,17 @@ data/raw/*
 data/processed/*
 !data/processed/.gitkeep
 !data/processed/label_map.json
+# step-18: test.parquet/val.parquet are what every published number in results.json/
+# README.md is actually relative to (test = the denominator of every metric; val = what the
+# step-14 checkpoint decision was made on) -- make_dataset.py is now PROVEN deterministic
+# (PROGRESS.md's step-17 entry), so anyone WITH the raw CSVs could regenerate these
+# identically, but the raw CSVs are 53MB and also gitignored -- so without committing these,
+# nobody cloning this repo could verify a single published number without first obtaining the
+# source dataset. train.parquet only affects reproducing the ~3-hour GPU training run, which
+# nobody re-runs just to check a claim -- stays gitignored. Same reasoning that un-gitignored
+# label_map.json above.
+!data/processed/test.parquet
+!data/processed/val.parquet
 
 # Secrets
 .env

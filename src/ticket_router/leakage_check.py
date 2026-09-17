@@ -45,6 +45,7 @@ RESULTS_DIR = REPO_ROOT / "results"
 REPORTS_DIR = REPO_ROOT / "reports"
 REPORT_PATH = REPORTS_DIR / "leakage_check.md"
 TFIDF_PREDICTIONS_PATH = RESULTS_DIR / "tfidf-baseline.predictions.jsonl"
+RESULTS_JSON_PATH = RESULTS_DIR / "results.json"
 
 TARGET_FIELDS = ["queue", "priority", "type"]
 FLAG_THRESHOLDS = [0.90, 0.95, 0.99]
@@ -224,11 +225,29 @@ def build_report(*, n_train, n_test, stats, threshold_counts, top_pairs, n_low_s
     return lines
 
 
+def load_random_baseline_f1() -> dict:
+    """Read the random-baseline reference LIVE from results/results.json, not a hand-typed
+    snapshot. A hardcoded copy sat here before (step-04c) and went stale exactly once
+    already: predict_random_baseline.py's sampling method changed (step-18, id-keyed
+    instead of position-keyed -- see its module docstring) and the macro-F1 numbers
+    changed with it, but a hardcoded copy in THIS file would not have, silently. This
+    doesn't depend on the TF-IDF run at all, but reading it live costs nothing and removes
+    the staleness risk entirely instead of just fixing today's snapshot."""
+    if not RESULTS_JSON_PATH.exists():
+        print(f"STOP: {RESULTS_JSON_PATH} not found.")
+        print("Run predict_random_baseline.py, then evaluate.py --run-name random-baseline, first.")
+        raise SystemExit(1)
+    all_results = json.loads(RESULTS_JSON_PATH.read_text(encoding="utf-8"))
+    if "random-baseline" not in all_results:
+        print(f"STOP: 'random-baseline' not found in {RESULTS_JSON_PATH}.")
+        print("Run predict_random_baseline.py, then evaluate.py --run-name random-baseline, first.")
+        raise SystemExit(1)
+    fields = all_results["random-baseline"]["fields"]
+    return {field: fields[field]["macro_f1"] for field in TARGET_FIELDS}
+
+
 def decide_verdict(all_results: dict, low_sim_results: dict) -> str:
-    # Random-baseline macro-F1 reference (results/results.json, run "random-baseline",
-    # test split) -- queue 0.1110, priority 0.3427, type 0.2577. Quoted here as a fixed
-    # reference point, not recomputed, since it doesn't depend on the TF-IDF run at all.
-    random_baseline_f1 = {"queue": 0.1110, "priority": 0.3427, "type": 0.2577}
+    random_baseline_f1 = load_random_baseline_f1()
     lines = []
     collapsed_fields = []
     held_fields = []

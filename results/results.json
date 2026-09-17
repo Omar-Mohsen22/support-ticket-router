@@ -11,130 +11,136 @@
         "note": "No training step -- samples from each field's marginal distribution in the train split; no model is fit or served."
       }
     },
+    "gold_split": {
+      "split": "test",
+      "limit": null,
+      "n": 1633,
+      "id_sequence_sha256": "8841a6d106b1a74eccd11e0cc58fce6505a48822ae432d8693150fda2205fcce"
+    },
     "n_gold": 1633,
     "n_valid": 1633,
     "invalid_rate": 0.0,
-    "exact_match_rate": 0.02204531537048377,
+    "exact_match_rate": 0.01224739742804654,
     "fields": {
       "queue": {
-        "accuracy": 0.17819963257807717,
-        "macro_f1": 0.11101923794714066,
+        "accuracy": 0.16595223515003063,
+        "macro_f1": 0.09956023769650099,
         "per_class": {
           "Billing and Payments": {
             "support": 159,
-            "precision": 0.11627906976744186,
-            "recall": 0.12578616352201258,
-            "f1": 0.12084592145015104
+            "precision": 0.11409395973154363,
+            "recall": 0.1069182389937107,
+            "f1": 0.11038961038961038
           },
           "Customer Service": {
             "support": 241,
-            "precision": 0.15350877192982457,
-            "recall": 0.14522821576763487,
-            "f1": 0.1492537313432836
+            "precision": 0.13147410358565736,
+            "recall": 0.13692946058091288,
+            "f1": 0.13414634146341464
           },
           "General Inquiry": {
             "support": 24,
-            "precision": 0.07692307692307693,
-            "recall": 0.08333333333333333,
-            "f1": 0.08
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
           },
           "Human Resources": {
             "support": 35,
-            "precision": 0.05555555555555555,
-            "recall": 0.05714285714285714,
-            "f1": 0.056338028169014086
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
           },
           "IT Support": {
             "support": 194,
-            "precision": 0.16091954022988506,
-            "recall": 0.14432989690721648,
-            "f1": 0.15217391304347827
+            "precision": 0.10784313725490197,
+            "recall": 0.1134020618556701,
+            "f1": 0.11055276381909548
           },
           "Product Support": {
             "support": 307,
-            "precision": 0.1873015873015873,
-            "recall": 0.19218241042345277,
-            "f1": 0.1897106109324759
+            "precision": 0.1834862385321101,
+            "recall": 0.19543973941368079,
+            "f1": 0.18927444794952683
           },
           "Returns and Exchanges": {
             "support": 82,
-            "precision": 0.011764705882352941,
-            "recall": 0.012195121951219513,
-            "f1": 0.011976047904191616
+            "precision": 0.046511627906976744,
+            "recall": 0.04878048780487805,
+            "f1": 0.04761904761904762
           },
           "Sales and Pre-Sales": {
             "support": 51,
-            "precision": 0.038461538461538464,
-            "recall": 0.0392156862745098,
-            "f1": 0.03883495145631068
+            "precision": 0.07407407407407407,
+            "recall": 0.0784313725490196,
+            "f1": 0.0761904761904762
           },
           "Service Outages and Maintenance": {
             "support": 66,
-            "precision": 0.015151515151515152,
-            "recall": 0.015151515151515152,
-            "f1": 0.015151515151515152
+            "precision": 0.046153846153846156,
+            "recall": 0.045454545454545456,
+            "f1": 0.04580152671755725
           },
           "Technical Support": {
             "support": 474,
-            "precision": 0.29436325678496866,
-            "recall": 0.2974683544303797,
-            "f1": 0.29590766002098634
+            "precision": 0.2942528735632184,
+            "recall": 0.270042194092827,
+            "f1": 0.28162816281628156
           }
         },
         "n": 1633
       },
       "priority": {
-        "accuracy": 0.3655848132271892,
-        "macro_f1": 0.34266464942992375,
+        "accuracy": 0.3404776484996938,
+        "macro_f1": 0.3163293453460247,
         "per_class": {
           "high": {
             "support": 656,
-            "precision": 0.40793650793650793,
-            "recall": 0.39176829268292684,
-            "f1": 0.3996889580093313
+            "precision": 0.3778135048231511,
+            "recall": 0.35823170731707316,
+            "f1": 0.3677621283255086
           },
           "low": {
             "support": 345,
-            "precision": 0.22522522522522523,
-            "recall": 0.21739130434782608,
-            "f1": 0.22123893805309736
+            "precision": 0.19047619047619047,
+            "recall": 0.1855072463768116,
+            "f1": 0.18795888399412627
           },
           "medium": {
             "support": 632,
-            "precision": 0.39552238805970147,
-            "recall": 0.41930379746835444,
-            "f1": 0.4070660522273426
+            "precision": 0.38074074074074077,
+            "recall": 0.40664556962025317,
+            "f1": 0.3932670237184392
           }
         },
         "n": 1633
       },
       "type": {
-        "accuracy": 0.3080220453153705,
-        "macro_f1": 0.2576982541156123,
+        "accuracy": 0.288426209430496,
+        "macro_f1": 0.24444036515991419,
         "per_class": {
           "Change": {
             "support": 155,
-            "precision": 0.1032258064516129,
-            "recall": 0.1032258064516129,
-            "f1": 0.1032258064516129
+            "precision": 0.09714285714285714,
+            "recall": 0.10967741935483871,
+            "f1": 0.10303030303030303
           },
           "Incident": {
             "support": 666,
-            "precision": 0.41566265060240964,
-            "recall": 0.4144144144144144,
-            "f1": 0.41503759398496237
+            "precision": 0.3780487804878049,
+            "recall": 0.37237237237237236,
+            "f1": 0.37518910741301065
           },
           "Problem": {
             "support": 336,
-            "precision": 0.24233128834355827,
-            "recall": 0.23511904761904762,
-            "f1": 0.23867069486404832
+            "precision": 0.21407624633431085,
+            "recall": 0.21726190476190477,
+            "f1": 0.2156573116691285
           },
           "Request": {
             "support": 476,
-            "precision": 0.27049180327868855,
-            "recall": 0.2773109243697479,
-            "f1": 0.27385892116182575
+            "precision": 0.2885032537960954,
+            "recall": 0.27941176470588236,
+            "f1": 0.2838847385272145
           }
         },
         "n": 1633
@@ -155,6 +161,10 @@
     "run_name": "api-gpt4o-mini-50",
     "split": "test",
     "predictions_file": "results/api-gpt4o-mini-50.predictions.jsonl",
+    "superseded": {
+      "reason": "Known-bad sample, preserved intentionally (not deleted): all 50 tickets in this run share a single queue value, \"Billing and Payments\" -- the step-04 sampling-trap bug. This run used --limit 50 (df.head(50)) against test.parquet BEFORE step-04's shuffle fix, when a split's row order was grouped by queue class -- so \"the first 50 rows\" was a slice of one class, not a representative sample. Not comparable to any other run in this table. See PROGRESS.md's step-04 and step-17 entries.",
+      "superseded_by": "api-gpt4o-mini-full-test"
+    },
     "run_meta": {
       "cost_basis": "api-per-token",
       "hardware": "OpenAI API",

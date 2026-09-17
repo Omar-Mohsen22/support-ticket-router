@@ -7,6 +7,22 @@ latency_ms, input_tokens, output_tokens, and cost_usd are all written as 0 --
 not measured or estimated, but structurally zero, because this predictor
 never calls a model at all.
 
+Step-18: sampling is keyed off each row's stable `id`, not its position in
+`target`. An earlier version drew one shared `rng.choice(..., size=n)` array
+and assigned draw `i` to `target["id"][i]` -- SEED=42 made the DRAW SEQUENCE
+itself deterministic, but the file's final id->label mapping still depended
+on `test.parquet`'s row order at the moment the script ran. That is not
+reproducibility: seeding pins the sequence of numbers a generator produces,
+not what they get assigned to. Re-running the old version after
+`test.parquet`'s row order changed (step-04's shuffle fix, applied AFTER this
+predictor's original run) silently produced a different id->label mapping
+with an unchanged seed -- see PROGRESS.md's step-17 and step-18 entries. Now
+each row's prediction is drawn from an RNG seeded by a stable hash of
+(SEED, ticket_id, field) -- the SAME ticket gets the SAME prediction no
+matter what order the split's rows happen to be in, for the same reason the
+other predictors (id-keyed by construction: TF-IDF predicts from a row's own
+text, the API/adapter predictors send one ticket at a time) already were.
+
 Run from the repo root:
     .venv\\Scripts\\python.exe src\\ticket_router\\predict_random_baseline.py   (Windows)
     .venv/bin/python src/ticket_router/predict_random_baseline.py                (POSIX)
@@ -14,6 +30,7 @@ Run from the repo root:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -38,6 +55,18 @@ SEED = 42
 OUTPUT_PATH = RESULTS_DIR / "random-baseline.predictions.jsonl"
 
 
+def sample_for_row(ticket_id: str, field: str, values: np.ndarray, probs: np.ndarray, seed: int):
+    """Deterministic, ORDER-INDEPENDENT sample for one (ticket, field): the RNG
+    is seeded from a stable hash of (seed, ticket_id, field), never from the
+    row's position in a file. The same ticket id always gets the same
+    prediction, regardless of what order the split's rows are written in --
+    see the module docstring for why that matters here specifically."""
+    digest = hashlib.sha256(f"{seed}:{ticket_id}:{field}".encode("utf-8")).digest()
+    row_seed = int.from_bytes(digest[:8], "big")
+    row_rng = np.random.default_rng(row_seed)
+    return row_rng.choice(values, p=probs)
+
+
 def main() -> None:
     train_path = PROCESSED_DIR / f"{TRAIN_SPLIT}.parquet"
     predict_path = PROCESSED_DIR / f"{PREDICT_SPLIT}.parquet"
@@ -49,9 +78,8 @@ def main() -> None:
     train = pd.read_parquet(train_path)
     target = pd.read_parquet(predict_path)
     print(f"Fitting marginal label distributions on {len(train)} {TRAIN_SPLIT} rows")
-    print(f"Sampling predictions for {len(target)} {PREDICT_SPLIT} rows (seed={SEED})")
-
-    rng = np.random.default_rng(SEED)
+    print(f"Sampling predictions for {len(target)} {PREDICT_SPLIT} rows (seed={SEED}, "
+          "id-keyed -- see sample_for_row)")
 
     # Independent marginal distribution per field (not a joint distribution --
     # this baseline deliberately ignores any correlation between fields).
@@ -65,19 +93,15 @@ def main() -> None:
               f"most common = {counts.index[0]!r} ({field_probs[field][0]:.1%})")
 
     n = len(target)
-    sampled = {
-        field: rng.choice(field_values[field], size=n, p=field_probs[field])
-        for field in TARGET_FIELDS
-    }
-
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
-        for i, ticket_id in enumerate(target["id"]):
+        for ticket_id in target["id"]:
             row = {
                 "id": ticket_id,
-                "queue": sampled["queue"][i],
-                "priority": sampled["priority"][i],
-                "type": sampled["type"][i],
+                **{
+                    field: sample_for_row(ticket_id, field, field_values[field], field_probs[field], SEED)
+                    for field in TARGET_FIELDS
+                },
                 "latency_ms": 0.0,
                 "input_tokens": 0,
                 "output_tokens": 0,
