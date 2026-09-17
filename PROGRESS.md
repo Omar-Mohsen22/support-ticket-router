@@ -1917,3 +1917,87 @@ now proceeds past the point of the previous crash, (b) the printed dtype censuse
 checkpoints matching expectations (all-float16 after normalization, zero bfloat16 offenders),
 and (c) whether `accelerator.mixed_precision` printed in build_trainer ever disagrees with
 `sft_config.bf16` -- which would mean the "different bug" the user flagged is real.**
+
+## step-13: fix `evaluate_checkpoint_on_full_val` crash -- trl 1.13.0's SFTTrainer requires `train_dataset` even for eval-only use
+
+**The bug, from a real Colab run of step 14 ("Select the best checkpoint using the FULL
+validation set"):**
+```
+ValueError: `train_dataset` is required
+```
+raised from `trl` 1.13.0's `SFTTrainer.__init__`. `evaluate_checkpoint_on_full_val` (cell
+`4dfb2574`) builds an eval-only `SFTTrainer` with `eval_dataset` but no `train_dataset` --
+allowed by older trl, rejected by 1.13.0. **The fifth place in this notebook where code
+written against an assumed trl/transformers API surface broke against the actually-installed
+version** -- after `DataCollatorForCompletionOnlyLM` (step-08), `warmup_ratio` (step-10),
+`max_seq_length` (step-10), the unconditional bfloat16 cast (step-12), and now this.
+
+**Three changes requested, two applied, one already done:**
+1. **Applied**: `train_dataset=raw_datasets["train"].select(range(1))` added to the
+   `SFTTrainer(...)` construction inside `evaluate_checkpoint_on_full_val`, with a comment
+   explaining why one row (not the full 13,070-row split): `.evaluate()` never iterates
+   `train_dataset`, so one row satisfies trl's requirement without the cost of processing the
+   full train split once per checkpoint (10 times over the run) for nothing.
+2. **Already present, not re-added** -- flagged rather than silently duplicated: the
+   instruction described this reload as still lacking `dtype=COMPUTE_DTYPE`, but on disk (per
+   `git diff` and direct inspection) **both** `AutoModelForCausalLM.from_pretrained` calls in
+   this cell (`base = ...` inside the function, and `best_base = ...` after the loop) already
+   had `dtype=COMPUTE_DTYPE` -- added in step-11's user edit and unaffected since. Checked
+   carefully before editing specifically to avoid adding a duplicate kwarg; nothing needed
+   changing here.
+3. **Applied**: `normalize_bfloat16_params(eval_trainer.model, COMPUTE_DTYPE, ...)` -- reusing
+   the exact function from step-12, not a new one (the instruction named it
+   `normalize_trainable_param_dtype`; the function actually defined in the notebook is
+   `normalize_bfloat16_params` -- used the real name rather than introduce a call to a
+   function that doesn't exist) -- called on `eval_trainer.model` right after constructing
+   `SFTTrainer` and before `.evaluate()`, with a comment noting this is the same unconditional
+   bfloat16 cast from step-12's trace, and that skipping it here would make eval_loss for this
+   checkpoint incomparable to the others (computed at a different dtype).
+
+### Notebook-wide search for other `SFTTrainer`/`SFTConfig` constructions, as requested -- not changed, only reported
+
+Grepped every cell's source for `SFTTrainer(` and `SFTConfig(`. Exactly three hits, same as
+every previous search of this kind in this notebook:
+- **Cell 14** (markdown, step 7's intro) -- two prose mentions, not executable code.
+- **Cell 21** (`build_trainer()`, step 10) -- already correct: always passes
+  `train_dataset=raw_datasets["train"]` unconditionally (both the smoke test and the full run
+  train for real), so it was never exposed to this specific bug; already has the dtype
+  normalization from step-12.
+- **Cell 36** (`evaluate_checkpoint_on_full_val`, step 14) -- fixed in this step.
+
+**No other `SFTTrainer`/`SFTConfig` construction exists anywhere else in the notebook.**
+
+### Tooling note: the notebook is now too large for `NotebookEdit`'s prerequisite `Read`
+
+`Read` on `notebooks/train_qlora.ipynb` now fails outright (`File content (26022 tokens)
+exceeds maximum allowed tokens (25000)`) regardless of `offset`/`limit` -- the `.ipynb`
+renderer appears to ignore those parameters and always attempts to render the whole notebook.
+Since `NotebookEdit` requires a successful `Read` of the file first, it is now **blocked** for
+this notebook. Worked around by editing the cell directly: a small Python script
+(`json.load`, replace the target cell's `"source"` by id, `json.dump` back) run via `Bash`,
+bypassing both `Read` and `NotebookEdit` entirely. Diff verified afterward with `git diff` --
+confirmed minimal and exactly as intended (only the two new blocks inside cell `4dfb2574`,
+plus a trailing-newline normalization). **Future edits to this notebook will need the same
+workaround, or the notebook will need to be split, until this is resolved.**
+
+**Files changed:** `notebooks/train_qlora.ipynb` only (cell `4dfb2574`). No other file
+touched, no dependency added.
+
+**Could not be run or tested** -- needs a GPU, none available locally, per the instruction.
+Verified only that the notebook is still valid JSON and every code cell parses as valid Python
+via `ast.parse`.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import json, ast; nb = json.load(open('notebooks/train_qlora.ipynb', encoding='utf-8')); [ast.parse(''.join(l for l in ''.join(c['source']).splitlines(keepends=True) if not l.strip().startswith('!'))) for c in nb['cells'] if c['cell_type']=='code']; print('ok', len(nb['cells']), 'cells')"
+```
+
+Still did not run any training end-to-end. Whether step 14 now runs to completion -- and
+whether the per-checkpoint `eval_loss` values it prints are sane -- is unverified until the
+next Colab attempt (this step requires the full training run, step 13, to have already
+produced at least one checkpoint, which itself depends on step-12's fix working).
+
+**Next step: re-run on Colab, now covering the full pipeline through step 14. Given the
+five-in-a-row pattern of assumed-API-surface breaks, treat any further crash in this notebook
+as likely to be the same class of bug (an API this notebook was written against no longer
+matching the actually-installed trl/transformers/peft) before assuming anything else.**
