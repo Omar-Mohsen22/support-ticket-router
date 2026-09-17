@@ -7,13 +7,28 @@ TODO: one-line description.
 
 | run | split | n | exact_match | invalid_rate | queue_acc | queue_f1 | priority_acc | priority_f1 | type_acc | type_f1 | lat_p50_ms | lat_p95_ms | total_cost_usd | cost_per_1000_usd |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| random-baseline | test | 1633 | 2.20% | 0.00% | 17.82% | 0.1110 | 36.56% | 0.3427 | 30.80% | 0.2577 | 0.00 | 0.00 | 0.0000 | 0.0000 |
-| api-gpt4o-mini-50 | test | 50 | 12.00% | 0.00% | 48.00% | 0.6486 | 42.00% | 0.3111 | 78.00% | 0.6757 | 677.92 | 1841.18 | 0.0000 | 0.0000 |
-| api-gpt4o-mini-full-test | test | 1633 | 10.90% | 0.00% | 33.37% | 0.2554 | 43.54% | 0.3214 | 64.18% | 0.5209 | 698.54 | 1092.26 | 0.0000 | 0.0000 |
-| tfidf-baseline | test | 1633 | 29.33% | 0.00% | 50.83% | 0.3683 | 59.64% | 0.5445 | 84.94% | 0.8412 | 0.00 | 0.00 | 0.0000 | 0.0000 |
-| api-gpt4o-mini-fewshot-coverage | test | 1633 | 6.86% | 0.00% | 28.54% | 0.2445 | 43.11% | 0.3136 | 52.42% | 0.4327 | 756.10 | 1842.95 | 0.0000 | 0.0000 |
-| api-gpt4o-mini-fewshot-coverage-priority | test | 1633 | 7.04% | 0.00% | 26.94% | 0.2287 | 43.91% | 0.3246 | 54.81% | 0.4738 | 1230.44 | 2472.17 | 0.0000 | 0.0000 |
-| api-gpt4o-mini-fewshot-coverage-median | test | 1633 | 9.06% | 0.00% | 27.99% | 0.2399 | 44.09% | 0.3330 | 66.87% | 0.6687 | 980.63 | 27627.84 | 0.0000 | 0.0000 |
+| random-baseline | test | 1633 | 2.20% | 0.00% | 17.82% | 0.1110 | 36.56% | 0.3427 | 30.80% | 0.2577 | 0.00 [CPU] | 0.00 [CPU] | 0.0000 [cpu-local] | 0.0000 [cpu-local] |
+| api-gpt4o-mini-50 | test | 50 | 12.00% | 0.00% | 48.00% | 0.6486 | 42.00% | 0.3111 | 78.00% | 0.6757 | 677.92 [OpenAI API] | 1841.18 [OpenAI API] | 0.0000 [api-per-token] | 0.0000 [api-per-token] |
+| api-gpt4o-mini-full-test | test | 1633 | 10.90% | 0.00% | 33.37% | 0.2554 | 43.54% | 0.3214 | 64.18% | 0.5209 | 698.54 [OpenAI API] | 1092.26 [OpenAI API] | 0.0000 [api-per-token] | 0.0000 [api-per-token] |
+| tfidf-baseline | test | 1633 | 29.33% | 0.00% | 50.83% | 0.3683 | 59.64% | 0.5445 | 84.94% | 0.8412 | 0.00 [CPU] | 0.00 [CPU] | 0.0000 [cpu-local] | 0.0000 [cpu-local] |
+| api-gpt4o-mini-fewshot-coverage | test | 1633 | 6.86% | 0.00% | 28.54% | 0.2445 | 43.11% | 0.3136 | 52.42% | 0.4327 | 756.10 [OpenAI API] | 1842.95 [OpenAI API] | 0.0000 [api-per-token] | 0.0000 [api-per-token] |
+| api-gpt4o-mini-fewshot-coverage-priority | test | 1633 | 7.04% | 0.00% | 26.94% | 0.2287 | 43.91% | 0.3246 | 54.81% | 0.4738 | 1230.44 [OpenAI API] | 2472.17 [OpenAI API] | 0.0000 [api-per-token] | 0.0000 [api-per-token] |
+| api-gpt4o-mini-fewshot-coverage-median | test | 1633 | 9.06% | 0.00% | 27.99% | 0.2399 | 44.09% | 0.3330 | 66.87% | 0.6687 | 980.63 [OpenAI API] | 27627.84 [OpenAI API] | 0.0000 [api-per-token] | 0.0000 [api-per-token] |
+
+## Notes
+
+`[cost_basis]` next to a 0 cost, and `[hardware]` next to every latency figure, are generated from each run's `results/<run-name>.run_meta.json` -- not hand-typed.
+
+**What a `[cost_basis]` tag means:**
+
+- `api-per-token`: a hosted API call. The provider doesn't return a live $ figure per request, so a cost_usd of 0 here means UNMEASURED -- compute a real figure externally from the recorded input/output token counts -- not that the call was free.
+- `cpu-local`: runs entirely on a local CPU. A cost_usd of 0 here is real and measured -- genuinely free to run, no ambiguity.
+
+**Training cost** (a one-time cost, not part of any single prediction above -- so it is not, and cannot be, folded into `latency_ms` or `cost_usd`):
+
+- (none of the runs above report GPU training hours)
+
+Runs not listed above required no GPU training step of their own -- either a pre-trained hosted API model, or (TF-IDF, the random baseline) a fit measured in seconds of CPU time, not GPU-hours; see each such run's `training_cost.note` in `results/results.json` for the exact figure.
 
 <!-- RESULTS_TABLE_END -->
 

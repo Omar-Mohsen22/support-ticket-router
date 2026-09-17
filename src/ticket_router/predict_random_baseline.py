@@ -15,14 +15,21 @@ Run from the repo root:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+# Make `ticket_router` importable when this file is run directly.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from ticket_router.run_meta import no_training_cost, write_run_meta
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 RESULTS_DIR = REPO_ROOT / "results"
+RUN_NAME = "random-baseline"  # must match the --run-name evaluate.py is called with
 
 TRAIN_SPLIT = "train"
 PREDICT_SPLIT = "test"
@@ -79,6 +86,15 @@ def main() -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     print(f"\nWrote {n} predictions to {OUTPUT_PATH}")
+
+    meta_path = write_run_meta(
+        RUN_NAME, cost_basis="cpu-local", hardware="CPU",
+        training_cost=no_training_cost(
+            "No training step -- samples from each field's marginal distribution in the "
+            "train split; no model is fit or served."
+        ),
+    )
+    print(f"Wrote {meta_path}")
 
 
 if __name__ == "__main__":

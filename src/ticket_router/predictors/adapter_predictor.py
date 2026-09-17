@@ -98,6 +98,7 @@ from pydantic import ValidationError
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from ticket_router.make_sft_dataset import build_system_message
+from ticket_router.run_meta import write_run_meta
 from ticket_router.schema import TicketLabels
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -109,6 +110,16 @@ ENV_PATH = REPO_ROOT / ".env"
 CACHE_DIR = REPO_ROOT / ".cache" / "adapter_predictor"
 
 TARGET_FIELDS = ["queue", "priority", "type"]
+
+# A fixed historical fact about how THIS adapter (train/config.yaml's hub_model_id) was
+# trained -- not an inference knob, so it lives here rather than in train/config.yaml's
+# "inference" section. Recorded in run_meta (see main()) so report.py can show it: this
+# predictor's inference-time cost_usd is null/0 (see the module docstring), and without this
+# number sitting next to it, that 0 reads as "free" -- it is not. 3.35 hours = 3h21m,
+# measured on the Colab T4 run that produced checkpoint-1500 (see PROGRESS.md's step-07
+# through step-15 entries). Update this if the adapter is ever retrained.
+TRAINING_GPU_HOURS = 3.35
+TRAINING_HARDWARE = "Tesla T4 (Google Colab, free tier)"
 
 
 def load_config() -> dict:
@@ -371,6 +382,23 @@ def main() -> None:
     print(f"\nWrote {len(rows)} predictions to {output_path}")
     print(f"Cached (free) tickets: {n_cached}  |  Freshly generated: {n_fresh}  |  "
           f"Invalid (not retried): {n_invalid}")
+
+    # hardware is the ACTUAL device this inference run happened on, read at runtime -- not
+    # necessarily the same GPU the adapter was trained on (TRAINING_GPU_HOURS/TRAINING_HARDWARE
+    # above are about training, a separate, already-finished, fixed-cost event).
+    meta_path = write_run_meta(
+        args.run_name, cost_basis="gpu-local", hardware=torch.cuda.get_device_name(0),
+        training_cost={
+            "gpu_hours": TRAINING_GPU_HOURS,
+            "note": (
+                f"{TRAINING_GPU_HOURS} GPU-hour(s) on {TRAINING_HARDWARE} to train this adapter "
+                "(hub_model_id in train/config.yaml). The $0 training cost is because the free "
+                "tier absorbed it, not because training itself was free -- and this is a "
+                "one-time cost, separate from what serving each prediction below costs."
+            ),
+        },
+    )
+    print(f"Wrote {meta_path}")
 
 
 if __name__ == "__main__":

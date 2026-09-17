@@ -3,6 +3,14 @@
     "run_name": "random-baseline",
     "split": "test",
     "predictions_file": "results/random-baseline.predictions.jsonl",
+    "run_meta": {
+      "cost_basis": "cpu-local",
+      "hardware": "CPU",
+      "training_cost": {
+        "gpu_hours": 0.0,
+        "note": "No training step -- samples from each field's marginal distribution in the train split; no model is fit or served."
+      }
+    },
     "n_gold": 1633,
     "n_valid": 1633,
     "invalid_rate": 0.0,
@@ -147,6 +155,14 @@
     "run_name": "api-gpt4o-mini-50",
     "split": "test",
     "predictions_file": "results/api-gpt4o-mini-50.predictions.jsonl",
+    "run_meta": {
+      "cost_basis": "api-per-token",
+      "hardware": "OpenAI API",
+      "training_cost": {
+        "gpu_hours": 0.0,
+        "note": "No training step -- a hosted, pre-trained model called over the API."
+      }
+    },
     "n_gold": 50,
     "n_valid": 50,
     "invalid_rate": 0.0,
@@ -237,6 +253,14 @@
     "run_name": "api-gpt4o-mini-full-test",
     "split": "test",
     "predictions_file": "results/api-gpt4o-mini-full-test.predictions.jsonl",
+    "run_meta": {
+      "cost_basis": "api-per-token",
+      "hardware": "OpenAI API",
+      "training_cost": {
+        "gpu_hours": 0.0,
+        "note": "No training step -- a hosted, pre-trained model called over the API."
+      }
+    },
     "n_gold": 1633,
     "n_valid": 1633,
     "invalid_rate": 0.0,
@@ -381,6 +405,14 @@
     "run_name": "tfidf-baseline",
     "split": "test",
     "predictions_file": "results/tfidf-baseline.predictions.jsonl",
+    "run_meta": {
+      "cost_basis": "cpu-local",
+      "hardware": "CPU",
+      "training_cost": {
+        "gpu_hours": 0.0,
+        "note": "Trains in 3.06s total (all 3 classifiers) on a local CPU -- not comparable to the fine-tuned adapter's GPU training time."
+      }
+    },
     "n_gold": 1633,
     "n_valid": 1633,
     "invalid_rate": 0.0,
@@ -525,6 +557,14 @@
     "run_name": "api-gpt4o-mini-fewshot-coverage",
     "split": "test",
     "predictions_file": "results/api-gpt4o-mini-fewshot-coverage.predictions.jsonl",
+    "run_meta": {
+      "cost_basis": "api-per-token",
+      "hardware": "OpenAI API",
+      "training_cost": {
+        "gpu_hours": 0.0,
+        "note": "No training step -- a hosted, pre-trained model called over the API."
+      }
+    },
     "n_gold": 1633,
     "n_valid": 1633,
     "invalid_rate": 0.0,
@@ -669,6 +709,14 @@
     "run_name": "api-gpt4o-mini-fewshot-coverage-priority",
     "split": "test",
     "predictions_file": "results/api-gpt4o-mini-fewshot-coverage-priority.predictions.jsonl",
+    "run_meta": {
+      "cost_basis": "api-per-token",
+      "hardware": "OpenAI API",
+      "training_cost": {
+        "gpu_hours": 0.0,
+        "note": "No training step -- a hosted, pre-trained model called over the API."
+      }
+    },
     "n_gold": 1633,
     "n_valid": 1633,
     "invalid_rate": 0.0,
@@ -813,6 +861,14 @@
     "run_name": "api-gpt4o-mini-fewshot-coverage-median",
     "split": "test",
     "predictions_file": "results/api-gpt4o-mini-fewshot-coverage-median.predictions.jsonl",
+    "run_meta": {
+      "cost_basis": "api-per-token",
+      "hardware": "OpenAI API",
+      "training_cost": {
+        "gpu_hours": 0.0,
+        "note": "No training step -- a hosted, pre-trained model called over the API."
+      }
+    },
     "n_gold": 1633,
     "n_valid": 1633,
     "invalid_rate": 0.0,

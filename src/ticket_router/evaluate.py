@@ -30,6 +30,7 @@ import pandas as pd
 from pydantic import ValidationError
 
 from ticket_router.metrics import INVALID, exact_match_rate, field_metrics, md_table, percentile
+from ticket_router.run_meta import run_meta_path
 from ticket_router.schema import TicketLabels
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -187,6 +188,25 @@ def print_summary(run_name: str, split: str, result: dict) -> None:
         print(md_table(["class", "support", "precision", "recall", "f1"], rows))
 
 
+def load_run_meta(run_name: str) -> dict:
+    """Picks up results/<run_name>.run_meta.json if the predictor wrote one
+    (see ticket_router.run_meta) -- cost_basis, hardware, and training_cost,
+    none of which are derivable from the predictions file itself. Falls back
+    to an explicit "unknown" rather than silently omitting the key, so a
+    missing run_meta is visible in results.json and in report.py's table,
+    not just absent without explanation."""
+    path = run_meta_path(run_name)
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    print(f"WARNING: no {path.name} found -- recording run_meta as 'unknown' for '{run_name}'. "
+          "The predictor should call ticket_router.run_meta.write_run_meta() before this runs.")
+    return {
+        "cost_basis": "unknown",
+        "hardware": "unknown",
+        "training_cost": {"gpu_hours": 0.0, "note": "run_meta not provided"},
+    }
+
+
 def save_result(run_name: str, split: str, predictions_path: Path, result: dict) -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     if RESULTS_JSON_PATH.exists():
@@ -198,6 +218,7 @@ def save_result(run_name: str, split: str, predictions_path: Path, result: dict)
         "run_name": run_name,
         "split": split,
         "predictions_file": str(predictions_path.relative_to(REPO_ROOT)).replace("\\", "/"),
+        "run_meta": load_run_meta(run_name),
         **result,
     }
     RESULTS_JSON_PATH.write_text(json.dumps(all_results, indent=2, ensure_ascii=False), encoding="utf-8")

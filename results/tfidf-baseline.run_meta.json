@@ -1,0 +1,8 @@
+{
+  "cost_basis": "cpu-local",
+  "hardware": "CPU",
+  "training_cost": {
+    "gpu_hours": 0.0,
+    "note": "Trains in 3.06s total (all 3 classifiers) on a local CPU -- not comparable to the fine-tuned adapter's GPU training time."
+  }
+}

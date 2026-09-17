@@ -20,6 +20,7 @@ Run from the repo root:
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -27,6 +28,11 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.multiclass import OneVsRestClassifier
+
+# Make `ticket_router` importable when this file is run directly.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from ticket_router.run_meta import no_training_cost, write_run_meta
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
@@ -37,6 +43,7 @@ PREDICT_SPLIT = "test"
 TARGET_FIELDS = ["queue", "priority", "type"]
 SEED = 42
 OUTPUT_PATH = RESULTS_DIR / "tfidf-baseline.predictions.jsonl"
+RUN_NAME = "tfidf-baseline"  # must match the --run-name evaluate.py is called with
 
 # A single sensible configuration -- not tuned, not swept, not cross-validated.
 TFIDF_CONFIG = dict(max_features=20_000, ngram_range=(1, 2), stop_words="english", sublinear_tf=True)
@@ -65,6 +72,7 @@ def main() -> None:
 
     predictions = {}
     total_predict_s = 0.0
+    total_fit_s = 0.0
     for field in TARGET_FIELDS:
         print(f"\nTraining one-vs-rest logistic regression for `{field}` "
               f"({train[field].nunique()} classes) ...")
@@ -73,6 +81,7 @@ def main() -> None:
         t0 = time.perf_counter()
         clf.fit(X_train, train[field])
         fit_s = time.perf_counter() - t0
+        total_fit_s += fit_s
 
         t0 = time.perf_counter()
         preds = clf.predict(X_test)
@@ -110,6 +119,15 @@ def main() -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     print(f"\nWrote {len(test)} predictions to {OUTPUT_PATH}")
+
+    meta_path = write_run_meta(
+        RUN_NAME, cost_basis="cpu-local", hardware="CPU",
+        training_cost=no_training_cost(
+            f"Trains in {total_fit_s:.2f}s total (all 3 classifiers) on a local CPU -- "
+            "not comparable to the fine-tuned adapter's GPU training time."
+        ),
+    )
+    print(f"Wrote {meta_path}")
 
 
 if __name__ == "__main__":

@@ -2228,3 +2228,130 @@ followed by the same `evaluate.py --predictions results/adapter-qlora.prediction
 **Next step: run `adapter_predictor.py` on a real GPU, then `evaluate.py` on its output, and
 compare against `api-gpt4o-mini-full-test` and `tfidf-baseline` in `results/comparison.md` --
 the comparison this whole fine-tuning effort (steps 06-15) was building toward.**
+
+## step-16: settle how cost and latency are reported, BEFORE the fine-tuned predictor produces any numbers
+
+**Why now, specifically:** requested and done before `adapter_predictor.py` (step-15) has ever
+been run, on purpose. The predictions schema's `cost_usd`/`latency_ms` would let the adapter's
+results table row read `cost_usd=0.0`, exactly like TF-IDF's row -- which is false. TF-IDF
+trains in seconds on a CPU and serves on a CPU; the adapter took 3h21m (3.35 hours) of T4 GPU
+time to train and needs a GPU to serve. Deciding the categories and wording for this *before*
+seeing whether the adapter wins or loses on accuracy is the whole point -- deciding after would
+let the framing get quietly shaped by the result.
+
+### The design: run-level metadata, not a schema change
+
+Per the instruction, `evaluate.py`'s per-row predictions schema (`id`, `queue`, `priority`,
+`type`, `latency_ms`, `input_tokens`, `output_tokens`, `cost_usd`) is **untouched** -- nothing
+about it changed. Instead, new **run-level** metadata:
+
+- `cost_basis`: one of `api-per-token`, `cpu-local`, `gpu-local` (the three names the
+  instruction proposed -- judged clear enough to keep as-is, no reason to invent new ones).
+- `hardware`: the actual device a run happened on -- `torch.cuda.get_device_name(0)` for the
+  adapter (read at runtime, never hardcoded), `"CPU"` for TF-IDF/random-baseline, `"OpenAI
+  API"` for the API predictor.
+- `training_cost`: `{"gpu_hours": <float>, "note": <str>}` -- `3.35` for the adapter (with a
+  note stating plainly the $0 training cost is because Colab's free tier absorbed it, not
+  because training was free), `0.0` with an explanatory note for everything else (TF-IDF's
+  note states its fit is seconds of CPU time, not GPU-hours -- explicitly not comparable).
+
+New shared module `src/ticket_router/run_meta.py`: `write_run_meta(run_name, cost_basis,
+hardware, training_cost)` writes `results/<run_name>.run_meta.json`; `COST_BASIS_DESCRIPTIONS`
+is the one place the three categories' meanings are written in English, read back by
+`report.py` so the table's footnote text can never drift from what the code actually enforces.
+Each predictor calls it once, right after producing its predictions, using whatever it
+actually knows about its own run:
+- `predict_random_baseline.py`, `predictors/tfidf_baseline.py`: `cost_basis="cpu-local"`,
+  `hardware="CPU"`. TF-IDF's `training_cost.note` reports the REAL measured fit time
+  (`total_fit_s` across the 3 classifiers, now tracked and printed) rather than a vague "a few
+  seconds" claim.
+- `predictors/api_predictor.py`: `cost_basis="api-per-token"`, `hardware="OpenAI API"`, for
+  whatever `--run-name` that invocation used (covers all variants: zero-shot, coverage,
+  coverage-priority, coverage-median).
+- `predictors/adapter_predictor.py`: `cost_basis="gpu-local"`, `hardware` read live via
+  `torch.cuda.get_device_name(0)` (the *inference*-time GPU, which need not be the same GPU
+  the adapter was trained on), `training_cost` from two new module constants
+  (`TRAINING_GPU_HOURS = 3.35`, `TRAINING_HARDWARE = "Tesla T4 (Google Colab, free tier)"`) --
+  a fixed historical fact about this specific adapter, not an inference knob, so it lives as a
+  commented constant in the predictor rather than in `train/config.yaml`'s `inference:`
+  section.
+
+`evaluate.py`'s `save_result()` (the only thing that writes `results/results.json`) gained one
+new step: `load_run_meta(run_name)` looks for that sidecar file and merges its contents in
+under a new `"run_meta"` key -- falling back to an explicit `{"cost_basis": "unknown", ...}`
+with a printed `WARNING` (not a silent omission) if a predictor didn't write one. `evaluate.py`
+does not import `torch` or gain any GPU dependency -- hardware detection stays exactly where
+the real execution context is known (inside each predictor), not duplicated into the harness.
+
+### report.py: footnotes generated from results.json, nothing hand-typed
+
+`build_comparison()` now tags every `total_cost_usd`/`cost_per_1000_usd` cell that is 0 with
+`[cost_basis]` inline (`format_cost_cell`), and every `lat_p50_ms`/`lat_p95_ms` cell with
+`[hardware]` inline (`format_latency_cell`) -- directly in the cell, not only in a separate
+legend that could be read apart from the number. A `## Notes` section is appended below the
+table: a glossary of exactly the `cost_basis` values actually used in this run of the report
+(descriptions imported from `run_meta.COST_BASIS_DESCRIPTIONS`, not retyped), and a
+`training_cost` breakdown listing every run with `gpu_hours > 0` by name. All of this is
+generated from `results.json` on every run of `report.py`, exactly as before -- no markdown
+was hand-written into `comparison.md` or `README.md`.
+
+### A real, unrelated bug found and NOT silently fixed or hidden
+
+Verifying the mechanism end-to-end (by actually re-running `predict_random_baseline.py` and
+`predictors/tfidf_baseline.py`, then re-scoring both plus backfilling `run_meta` for the 5
+already-existing API runs) surfaced something that has nothing to do with this step's actual
+task: re-scoring **`random-baseline`** and **`api-gpt4o-mini-50`** against the *current* local
+`data/processed/test.parquet` produced **substantially different metrics** than what's
+currently committed in `results.json` (random-baseline's queue macro-F1 shifted from 0.1110 to
+0.0913; `api-gpt4o-mini-50`'s `invalid_rate` jumped from 0% to 96%, `n_valid` from 50 to 2).
+The other 5 runs (`api-gpt4o-mini-full-test` and the 3 fewshot variants, all full-split,
+scored by id) came back byte-identical; only the two order/position-sensitive ones drifted --
+`predict_random_baseline.py` assigns its RNG draws to rows by **position**
+(`sampled[field][i]` to `target["id"][i]`), and `api-gpt4o-mini-50`'s original run used
+`--limit 50`, i.e. `gold.head(50)`, also position-based. This is consistent with the local
+`data/processed/test.parquet` (gitignored, not tracked -- so this checkout's copy is not
+provably the same file that produced the committed numbers) having a **different row order**
+than whatever produced the currently-committed values, while its **row-to-id membership**
+stays intact (id-keyed, full-split runs were unaffected). **Not investigated further and not
+fixed here** -- out of scope for this step, and CLAUDE.md's "stop and report a wrong
+assumption rather than invent a workaround" applies directly: this is a real, separate,
+pre-existing data-reproducibility question (is `make_dataset.py`'s shuffle actually
+deterministic across regenerations? has `test.parquet` simply never been regenerated to match
+some later fix?) that deserves its own investigation, not a fix folded into an unrelated task.
+
+**Recovered safely, not left broken:** `git checkout -- results/random-baseline.predictions.jsonl
+results/tfidf-baseline.predictions.jsonl results/results.json` reverted every numeric value
+back to the committed baseline, then `run_meta` was merged into all 7 entries via a pure
+JSON-key-insertion script (not `evaluate.py`'s recompute path) -- verified programmatically
+afterward that every field except the new `"run_meta"` key is byte-identical, per run, to what
+was already committed. No historical metric was overwritten by this step.
+
+**Files changed:** `src/ticket_router/run_meta.py` (new), `src/ticket_router/evaluate.py`
+(`load_run_meta` + `save_result` wiring), `src/ticket_router/report.py` (footnote rendering),
+`src/ticket_router/predict_random_baseline.py`, `src/ticket_router/predictors/tfidf_baseline.py`,
+`src/ticket_router/predictors/api_predictor.py`, `src/ticket_router/predictors/adapter_predictor.py`
+(each now calls `write_run_meta`), `results/results.json` (7 `run_meta` keys added, nothing
+else changed), `results/comparison.md` + `README.md` (regenerated via `report.py`), 7 new
+`results/<run-name>.run_meta.json` sidecar files. No dependency added.
+
+**Verified for real, not just syntax-checked:** `predict_random_baseline.py` and
+`predictors/tfidf_baseline.py` were actually run, followed by `evaluate.py` and `report.py` --
+confirming `write_run_meta` -> `evaluate.py`'s pickup -> `report.py`'s footnote rendering work
+end to end (the rendered table and `## Notes` section shown above are real output, not a mockup).
+`pytest -q`: 11/11 still passing. `adapter_predictor.py`'s own `write_run_meta` call is
+untested (same GPU constraint as step-15 -- not run).
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\predict_random_baseline.py
+.venv\Scripts\python.exe src\ticket_router\evaluate.py --predictions results\random-baseline.predictions.jsonl --split test --run-name random-baseline
+.venv\Scripts\python.exe src\ticket_router\report.py
+.venv\Scripts\python.exe -m pytest -q
+```
+
+**Next step: still run `adapter_predictor.py` on a real GPU (step-15), then `evaluate.py` --
+its `run_meta` will be picked up automatically and the table will render `[gpu-local]`/
+`[<real GPU name>]` and a training-cost line for it, with no further code changes needed.
+Separately, worth investigating on its own: why `data/processed/test.parquet`'s local copy
+doesn't reproduce the row order that produced the currently-committed
+`random-baseline`/`api-gpt4o-mini-50` numbers.**

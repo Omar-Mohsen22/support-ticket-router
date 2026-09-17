@@ -1,0 +1,8 @@
+{
+  "cost_basis": "cpu-local",
+  "hardware": "CPU",
+  "training_cost": {
+    "gpu_hours": 0.0,
+    "note": "No training step -- samples from each field's marginal distribution in the train split; no model is fit or served."
+  }
+}

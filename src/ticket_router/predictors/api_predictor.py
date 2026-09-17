@@ -62,6 +62,7 @@ from openai import OpenAI, APIStatusError, BadRequestError, RateLimitError
 from pydantic import ValidationError
 from sklearn.feature_extraction.text import CountVectorizer
 
+from ticket_router.run_meta import no_training_cost, write_run_meta
 from ticket_router.schema import TicketLabels
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -625,6 +626,14 @@ def main() -> None:
 
     print(f"\nWrote {len(df)} predictions to {output_path}")
     print(f"Cached (free) tickets: {n_cached}  |  Freshly called: {n_fresh}  |  Failed (invalid after retries): {n_errors}")
+
+    meta_path = write_run_meta(
+        args.run_name, cost_basis="api-per-token", hardware="OpenAI API",
+        training_cost=no_training_cost(
+            "No training step -- a hosted, pre-trained model called over the API."
+        ),
+    )
+    print(f"Wrote {meta_path}")
 
 
 if __name__ == "__main__":

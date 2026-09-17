@@ -1,0 +1,8 @@
+{
+  "cost_basis": "api-per-token",
+  "hardware": "OpenAI API",
+  "training_cost": {
+    "gpu_hours": 0.0,
+    "note": "No training step -- a hosted, pre-trained model called over the API."
+  }
+}
