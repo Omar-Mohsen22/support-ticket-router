@@ -2355,3 +2355,146 @@ its `run_meta` will be picked up automatically and the table will render `[gpu-l
 Separately, worth investigating on its own: why `data/processed/test.parquet`'s local copy
 doesn't reproduce the row order that produced the currently-committed
 `random-baseline`/`api-gpt4o-mini-50` numbers.**
+
+## step-17: close the step-16 investigation -- test both hypotheses, test drift directly, add a hash check that fails loudly
+
+**Hypothesis A (api-gpt4o-mini-50), tested, precisely confirmed with a caveat.**
+`results/api-gpt4o-mini-50.predictions.jsonl` has exactly 50 rows (`wc -l`). Re-scoring it
+against the FULL 1,633-row test split (no `--limit`, using `evaluate.py`'s own `load_predictions`/
+`evaluate()` directly so nothing was written to `results.json`) gives `n_valid=50,
+invalid_rate=0.9693815064298836` -- matching `1 - 50/1633 = 0.9693815064298836` to full float
+precision. **But** that is not literally what produced last turn's reported ~96%: that run
+correctly passed `--limit 50`. Checked precisely instead: all 50 of the file's ids are still
+present *somewhere* in the current full `test.parquet` (`len(pred_ids & set(gold["id"])) == 50`
+-- membership intact), but only **2 of them** fall within the CURRENT first-50 rows by position
+(`len(pred_ids & current_first_50_ids) == 2`). Same underlying mechanism the hypothesis points
+at (a position-based comparison against a since-reordered split), just via `--limit`'s
+`gold.head(n)` rather than a missing `--limit`.
+
+**Hypothesis B (random-baseline), tested.** `src/ticket_router/predict_random_baseline.py` IS
+seeded (`SEED = 42`, `rng = np.random.default_rng(SEED)`) -- the draw sequence itself is fully
+deterministic given the same `train.parquet` content. But the assignment is **positional**:
+`sampled[field][i]` -> `target["id"][i]`, i.e. the i-th random draw is handed to whatever id
+sits at position i of `test.parquet` *at the moment the script runs*. Seeded is not sufficient
+for reproducibility here -- the row order of `test.parquet` also has to match, and nothing
+checked that it did.
+
+**The drift question, tested directly, as a fact:** `make_dataset.py`'s `main()` was run fresh
+just now with every output path monkeypatched to a scratch directory (`OUTPUT_DIR`,
+`LABEL_MAP_PATH`, `DATA_README_PATH` -- all three, since `LABEL_MAP_PATH` is bound from
+`OUTPUT_DIR` at import time and does not follow a later override, and `DATA_README_PATH` is
+the real, git-tracked `data/README.md` that would otherwise have been silently overwritten).
+Real `data/raw/`'s CSV was read (unchanged, read-only). Compared the regenerated `test.parquet`
+against the currently-committed one on disk:
+```
+committed test.parquet:   1633 rows
+regenerated test.parquet: 1633 rows
+same COUNT: True
+same SET (membership, order-independent): True
+same ORDERED SEQUENCE (id-for-id, position-for-position): True
+```
+**Fact: `make_dataset.py` is fully reproducible on this machine, right now.** There is no
+ongoing/current drift in `test.parquet` -- regenerating it from the checked-in raw CSV
+reproduces the exact current file, order included.
+
+**So what actually explains the two mismatches?** Not instability in the current pipeline --
+`random-baseline.predictions.jsonl` and `api-gpt4o-mini-50.predictions.jsonl` are simply
+**stale artifacts that predate step-04's shuffle fix** to `test.parquet`'s row order (see
+PROGRESS.md's step-04 entry: the shuffle was added specifically because a `--limit 50` run,
+before the fix, drew 50 rows that were "100% one queue class" -- which matches
+`api-gpt4o-mini-50`'s committed `results.json` entry exactly: its `queue.per_class` lists only
+`"Billing and Payments"`, support 50). Both files' content is genuine and their OWN committed
+metrics remain internally valid for the file as it exists -- they were simply never
+regenerated against the corrected, later row order, and nothing before this step could have
+told anyone that.
+
+### The fix: evaluate.py now hashes and checks the gold split, and fails loudly on a mismatch
+
+`src/ticket_router/evaluate.py`:
+- `compute_gold_hash(ids)`: sha256 of the gold split's **ordered** id sequence (`"\n".join`,
+  not a sorted set) -- order has to be part of the hash, since that is exactly what broke
+  `random-baseline` and the `--limit 50` run above; a hash of just the id *set* would have
+  missed both.
+- Every `results.json` entry now carries a `"gold_split"` key:
+  `{"split", "limit", "n", "id_sequence_sha256"}`.
+- `check_gold_hash_consistency(all_results, split, limit, gold_hash, run_name)`: before saving,
+  compares this run's hash against every *other* run already recorded for the identical
+  `(split, limit)` pair. On a mismatch: prints both hashes and a clear explanation, then
+  `raise SystemExit(1)` -- **no `results.json` write happens**. Deliberately scoped to
+  `(split, limit)`, not just `split`, so a legitimate `--limit 50` smoke test is never flagged
+  against a full-split run (they were never claimed to be comparable). Re-running the *same*
+  `run_name` (overwriting its own prior entry) is always allowed regardless of its own earlier
+  hash -- only *other* run names sharing the same split/limit are compared against.
+- `main()` computes the hash and runs the check **before** calling `evaluate()` -- fails fast,
+  before spending any time computing metrics that would just get thrown away.
+
+**Verified without touching the real `results.json`, on purpose** (after last step's lesson):
+wrote an isolated test script exercising `compute_gold_hash`/`check_gold_hash_consistency`
+directly against fabricated `all_results` dicts -- confirmed: (1) matching hash under the same
+split/limit passes silently, (2) a real mismatch under the same split/limit raises
+`SystemExit` with a clear message naming both hashes, (3) a mismatch under a *different* limit
+does **not** raise (correctly not comparable groups), (4) re-scoring the same `run_name` never
+raises regardless of its own prior hash, (5) the bootstrap case (no prior entries at all) never
+raises. `pytest -q`: still 11/11. `git status` after all of this shows only
+`src/ticket_router/evaluate.py` changed -- `results.json` and every predictions file are
+untouched, per the instruction ("report all of this before changing anything beyond the hash
+check").
+
+### Recommendation on committing the split files instead of gitignoring them (not acted on)
+
+**Recommend: commit `data/processed/test.parquet` and `data/processed/val.parquet`. Leave
+`train.parquet` gitignored.** Reasoning:
+
+- This is the *same* argument that already applied to `label_map.json` (step-02 correction):
+  "the label contract... schema.py, the evaluation harness, and the CI tests all depend on its
+  exact contents, and CI does not rebuild the dataset." `test.parquet` is that argument's
+  natural extension -- it is not just something code depends on, it is the literal denominator
+  of every number in `results/comparison.md` and `README.md`. If it drifts, every published
+  comparison becomes silently unverifiable by anyone who cannot reproduce the exact historical
+  file -- which, per the previous section, is provably possible today but is not a standing
+  guarantee (see below).
+- Small: `test.parquet` is 617 KB; `val.parquet` (1,635 rows, almost the same size) is
+  comparable. Trivial by git's standards, nowhere near the SFT JSONL files (`train.jsonl`,
+  called out as "sizeable" at 16MB in step-06 and kept gitignored partly for that reason).
+- The hash check above only protects against drift being detected *after the fact*, by
+  comparing against sibling entries already in `results.json` -- it cannot protect a single
+  fresh clone with an empty `results.json` from silently producing a self-consistent but
+  historically-incomparable set of numbers from scratch. Committing `test.parquet` removes the
+  ambiguity at the root instead of only detecting its symptom.
+- Today's reproducibility is real (just proven) but is contingent on: `requirements.txt`'s
+  exact pins (`pandas==3.0.5`, `numpy==2.5.3`) never being bumped without re-verifying this;
+  and, more fundamentally, on `data/raw/`'s source CSV -- ALSO gitignored, re-downloaded fresh
+  from the Hugging Face Hub by `inspect_data.py` -- never changing upstream. Neither is
+  guaranteed to stay true indefinitely, and nothing in this project would notice if either one
+  quietly did, on a machine with no prior `results.json` to hash-check against.
+- `train.parquet` is a closer call and I'm **not** recommending it: at ~4.9 MB (8x `test`'s
+  size) it is meaningfully bigger, and its exact reproducibility is not load-bearing for
+  *comparing already-published results* the way test/val are -- it only matters for
+  reproducing *training itself* (TF-IDF's fit, the adapter's fine-tuning), a real but
+  lower-stakes and differently-scoped concern than "can last month's published table still be
+  verified."
+
+This is a recommendation only -- `.gitignore` was not touched, and neither `test.parquet` nor
+`val.parquet` was `git add`ed.
+
+**Files changed:** `src/ticket_router/evaluate.py` only. No other file touched (confirmed via
+`git status`), no dependency added (`hashlib` is stdlib).
+
+**Verify with:**
+```
+.venv\Scripts\python.exe -c "import ast; ast.parse(open('src/ticket_router/evaluate.py', encoding='utf-8').read()); print('syntax OK')"
+.venv\Scripts\python.exe -m pytest -q
+```
+The isolated hash-check test above was a one-off scratch script, not committed (mirrors the
+project's existing convention of not committing ad hoc diagnostic scripts -- e.g. step-08's
+30/30-vs-30/30 comparison).
+
+Deliberately did NOT re-run `evaluate.py` against the real `results.json` in this step (that
+would add `"gold_split"` to the 7 existing entries, bootstrapping them against today's data --
+plausible and safe given the drift finding above, but the instruction was explicit: report
+first, change nothing beyond the hash check itself).
+
+**Next step: decide on the `test.parquet`/`val.parquet` gitignore recommendation above. Once
+settled, `evaluate.py` can be re-run for the 7 existing entries to backfill their `gold_split`
+hashes (a pure bootstrap -- there is nothing to compare the first backfilled entry against),
+and then `adapter_predictor.py` still needs a real GPU run (step-15).**

@@ -8,6 +8,22 @@ field, exact-match rate, invalid-output rate, latency p50/p95, and cost.
 Prints a markdown summary row plus a per-class breakdown, and writes/updates
 results/results.json, keyed by run name.
 
+Step-16 (run_meta) recorded WHERE and at what cost a run happened. Step-17
+records WHAT DATA it was scored against: data/processed/*.parquet is
+gitignored (not version-controlled), so nothing previously stopped a run
+from silently being scored against a test split with a different row order
+(or content) than the one earlier results in results.json were produced
+against -- two committed runs (random-baseline, api-gpt4o-mini-50) turned
+out to be exactly that (see PROGRESS.md's step-17 entry for the full
+investigation). Every run's gold split is now hashed (compute_gold_hash --
+the ORDERED id sequence, since row order matters for position-based
+predictors like the random baseline) and recorded under "gold_split" in its
+results.json entry. Before saving, check_gold_hash_consistency() compares
+this run's hash against every other run already recorded against the same
+(split, limit) and STOPS (SystemExit, no results.json write) on a mismatch,
+rather than silently adding a row that cannot actually be compared to the
+rest of the table.
+
 Run from the repo root:
     .venv\\Scripts\\python.exe src\\ticket_router\\evaluate.py \\
         --predictions results/random-baseline.predictions.jsonl \\
@@ -17,6 +33,7 @@ Run from the repo root:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -207,18 +224,74 @@ def load_run_meta(run_name: str) -> dict:
     }
 
 
-def save_result(run_name: str, split: str, predictions_path: Path, result: dict) -> None:
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+def compute_gold_hash(ids: list) -> str:
+    """sha256 of the gold split's ORDERED id sequence (position matters, not
+    just membership -- see check_gold_hash_consistency for why: a predictor
+    that assigns by position, e.g. predict_random_baseline.py, or a
+    --limit-based row slice, produces a different, silently incomparable
+    result if the underlying split's row order changes even when its id SET
+    is unchanged)."""
+    payload = "\n".join(str(i) for i in ids)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def load_results_json() -> dict:
     if RESULTS_JSON_PATH.exists():
-        all_results = json.loads(RESULTS_JSON_PATH.read_text(encoding="utf-8"))
-    else:
-        all_results = {}
+        return json.loads(RESULTS_JSON_PATH.read_text(encoding="utf-8"))
+    return {}
+
+
+def check_gold_hash_consistency(all_results: dict, split: str, limit: int | None,
+                                 gold_hash: str, run_name: str) -> None:
+    """FAIL LOUDLY (raise SystemExit) if this run's gold split does not match
+    the ordered id sequence already recorded by another run against the same
+    (split, limit) -- this project's comparison table (report.py) assumes
+    every run against the same split/limit is directly comparable. Silently
+    scoring against a different id order/set would produce numbers that
+    cannot actually be compared to the existing ones, with no way to tell
+    from results.json alone that anything was wrong (see PROGRESS.md's
+    step-16 and step-17 entries for exactly this happening: two committed
+    runs turned out to have been scored against a since-changed row order).
+
+    Only compares against OTHER run names using the identical (split, limit)
+    -- a deliberately smaller/--limit'd smoke-test run (e.g.
+    api-gpt4o-mini-50) is legitimately a different id sequence from a
+    full-split run and must not be flagged against it. Re-running the SAME
+    run_name (overwriting itself) is always allowed regardless of its own
+    prior hash.
+    """
+    for other_name, other in all_results.items():
+        if other_name == run_name:
+            continue
+        gs = other.get("gold_split")
+        if not gs or gs.get("split") != split or gs.get("limit") != limit:
+            continue
+        if gs.get("id_sequence_sha256") != gold_hash:
+            print("STOP: gold split mismatch.")
+            print(f"  '{run_name}' would be scored against a DIFFERENT ordered test-set id "
+                  f"sequence than '{other_name}', even though both use split={split!r} "
+                  f"limit={limit!r}.")
+            print(f"  '{other_name}' recorded hash: {gs.get('id_sequence_sha256')}")
+            print(f"  This run's hash:              {gold_hash}")
+            print("  The resulting metrics would NOT be comparable to the existing results "
+                  "table -- refusing to save. Either regenerate data/processed/ so it matches "
+                  "the split the existing results were produced against, or, if the split was "
+                  "deliberately changed, that is a new baseline -- re-run every predictor "
+                  "against it explicitly rather than letting this one run silently disagree "
+                  "with the rest of results.json.")
+            raise SystemExit(1)
+
+
+def save_result(run_name: str, split: str, predictions_path: Path, result: dict,
+                 gold_split: dict, all_results: dict) -> None:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     all_results[run_name] = {
         "run_name": run_name,
         "split": split,
         "predictions_file": str(predictions_path.relative_to(REPO_ROOT)).replace("\\", "/"),
         "run_meta": load_run_meta(run_name),
+        "gold_split": gold_split,
         **result,
     }
     RESULTS_JSON_PATH.write_text(json.dumps(all_results, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -252,10 +325,19 @@ def main() -> None:
     print(f"Loaded {len(gold)} gold rows from {gold_path.name}"
           + (f" (limited to first {args.limit})" if args.limit is not None else ""))
 
+    gold_ids = gold["id"].tolist()
+    gold_hash = compute_gold_hash(gold_ids)
+    all_results = load_results_json()
+    check_gold_hash_consistency(all_results, args.split, args.limit, gold_hash, args.run_name)
+
     labels_by_id, numeric_by_id = load_predictions(args.predictions)
     result = evaluate(gold, labels_by_id, numeric_by_id)
     print_summary(args.run_name, args.split, result)
-    save_result(args.run_name, args.split, args.predictions, result)
+    gold_split = {
+        "split": args.split, "limit": args.limit, "n": len(gold_ids),
+        "id_sequence_sha256": gold_hash,
+    }
+    save_result(args.run_name, args.split, args.predictions, result, gold_split, all_results)
 
 
 if __name__ == "__main__":
