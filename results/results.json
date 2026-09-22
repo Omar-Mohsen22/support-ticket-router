@@ -1018,5 +1018,163 @@
       "per_1000_usd": 0.0,
       "n_with_cost": 0
     }
+  },
+  "qlora-adapter-ckpt1500": {
+    "run_name": "qlora-adapter-ckpt1500",
+    "split": "test",
+    "predictions_file": "results/qlora-adapter-ckpt1500.predictions.jsonl",
+    "run_meta": {
+      "cost_basis": "gpu-local",
+      "hardware": "Tesla T4",
+      "training_cost": {
+        "gpu_hours": 3.35,
+        "note": "3.35 GPU-hour(s) on Tesla T4 (Google Colab, free tier) to train this adapter (hub_model_id in train/config.yaml). The $0 training cost is because the free tier absorbed it, not because training itself was free -- and this is a one-time cost, separate from what serving each prediction below costs."
+      }
+    },
+    "gold_split": {
+      "split": "test",
+      "limit": null,
+      "n": 1633,
+      "id_sequence_sha256": "8841a6d106b1a74eccd11e0cc58fce6505a48822ae432d8693150fda2205fcce"
+    },
+    "n_gold": 1633,
+    "n_valid": 1632,
+    "invalid_rate": 0.000612369871402327,
+    "exact_match_rate": 0.26025719534598896,
+    "fields": {
+      "queue": {
+        "accuracy": 0.48805878750765463,
+        "macro_f1": 0.3999354536260832,
+        "per_class": {
+          "Billing and Payments": {
+            "support": 159,
+            "precision": 0.8473282442748091,
+            "recall": 0.6981132075471698,
+            "f1": 0.7655172413793103
+          },
+          "Customer Service": {
+            "support": 241,
+            "precision": 0.38247011952191234,
+            "recall": 0.3983402489626556,
+            "f1": 0.39024390243902435
+          },
+          "General Inquiry": {
+            "support": 24,
+            "precision": 0.3333333333333333,
+            "recall": 0.08333333333333333,
+            "f1": 0.13333333333333333
+          },
+          "Human Resources": {
+            "support": 35,
+            "precision": 0.6153846153846154,
+            "recall": 0.22857142857142856,
+            "f1": 0.3333333333333333
+          },
+          "IT Support": {
+            "support": 194,
+            "precision": 0.7272727272727273,
+            "recall": 0.08247422680412371,
+            "f1": 0.14814814814814814
+          },
+          "Product Support": {
+            "support": 307,
+            "precision": 0.42616033755274263,
+            "recall": 0.3289902280130293,
+            "f1": 0.37132352941176466
+          },
+          "Returns and Exchanges": {
+            "support": 82,
+            "precision": 0.5151515151515151,
+            "recall": 0.2073170731707317,
+            "f1": 0.2956521739130435
+          },
+          "Sales and Pre-Sales": {
+            "support": 51,
+            "precision": 0.5263157894736842,
+            "recall": 0.19607843137254902,
+            "f1": 0.2857142857142857
+          },
+          "Service Outages and Maintenance": {
+            "support": 66,
+            "precision": 0.7096774193548387,
+            "recall": 0.6666666666666666,
+            "f1": 0.6875
+          },
+          "Technical Support": {
+            "support": 474,
+            "precision": 0.4568764568764569,
+            "recall": 0.8270042194092827,
+            "f1": 0.5885885885885886
+          }
+        },
+        "n": 1633
+      },
+      "priority": {
+        "accuracy": 0.5309246785058175,
+        "macro_f1": 0.4943580850912936,
+        "per_class": {
+          "high": {
+            "support": 656,
+            "precision": 0.6206395348837209,
+            "recall": 0.6509146341463414,
+            "f1": 0.6354166666666665
+          },
+          "low": {
+            "support": 345,
+            "precision": 0.44036697247706424,
+            "recall": 0.2782608695652174,
+            "f1": 0.3410301953818828
+          },
+          "medium": {
+            "support": 632,
+            "precision": 0.4738292011019284,
+            "recall": 0.5443037974683544,
+            "f1": 0.5066273932253313
+          }
+        },
+        "n": 1633
+      },
+      "type": {
+        "accuracy": 0.8567054500918555,
+        "macro_f1": 0.8559217337878846,
+        "per_class": {
+          "Change": {
+            "support": 155,
+            "precision": 0.9935483870967742,
+            "recall": 0.9935483870967742,
+            "f1": 0.9935483870967742
+          },
+          "Incident": {
+            "support": 666,
+            "precision": 0.7825520833333334,
+            "recall": 0.9024024024024024,
+            "f1": 0.8382147838214784
+          },
+          "Problem": {
+            "support": 336,
+            "precision": 0.7253218884120172,
+            "recall": 0.5029761904761905,
+            "f1": 0.5940246045694201
+          },
+          "Request": {
+            "support": 476,
+            "precision": 0.9978991596638656,
+            "recall": 0.9978991596638656,
+            "f1": 0.9978991596638656
+          }
+        },
+        "n": 1633
+      }
+    },
+    "latency_ms": {
+      "p50": 304.28969625000946,
+      "p95": 372.56395687501254,
+      "n": 1633
+    },
+    "cost": {
+      "total_usd": 0,
+      "per_1000_usd": 0.0,
+      "n_with_cost": 0
+    }
   }
 }

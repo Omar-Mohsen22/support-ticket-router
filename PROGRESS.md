@@ -2621,3 +2621,117 @@ step. When it's scored, `evaluate.py`'s step-17 hash check will run against `ran
 (and every other run's) now-recorded `gold_split` hash automatically -- the 6 remaining
 comparable entries (all full-split, `limit=None`) still lack a recorded `gold_split` and will
 bootstrap theirs the first time each is next re-scored, same as `random-baseline` did here.**
+
+## step-19: error analysis -- do qlora-adapter-ckpt1500 and tfidf-baseline fail on the same tickets, in the same direction?
+
+`qlora-adapter-ckpt1500` was scored on the full test split (via `adapter_predictor.py` on a
+real GPU + `evaluate.py`) since step-18: queue macro-F1 0.3999, priority 0.4944, type 0.8559,
+exact-match 26.03%, invalid rate 0.06%. This step runs entirely on local files (no GPU, no
+model) and answers one question, diagnosis only -- no fix, retraining, hyperparameter, or
+label-merge proposal is made here: **do the fine-tuned adapter and the architecturally
+unrelated TF-IDF baseline (bag-of-words + logistic regression vs. a fine-tuned transformer,
+sharing no inductive bias) confuse the same class pairs, in the same direction?** If they do,
+that is evidence the ceiling is a property of the LABELS, not of either model's capacity.
+
+### New script: `src/ticket_router/error_analysis.py`
+
+Reads both runs' `predictions_file` paths from `results/results.json` (never hand-typed),
+`data/processed/test.parquet` as gold, and reuses `evaluate.load_predictions` (so an invalid
+or missing prediction is classified exactly the way the harness itself classifies it -- the
+`INVALID` sentinel from `metrics.py`, not silently dropped or re-implemented differently here).
+Before scoring anything, re-verifies each run's recorded `gold_split` hash (step-17's mechanism)
+against the `test.parquet` actually on disk, and STOPs if they disagree -- the same guarantee
+`evaluate.py` gives a fresh scoring run applies to this analysis reading an old one back.
+
+Produces, per field (`queue`/`priority`/`type`), entirely generated from the data:
+1. A raw-count confusion matrix for each run (rows=gold, columns=predicted, `__INVALID__` as
+   an explicit column only where it actually occurs).
+2. Each run's top 10 confused (gold, predicted) pairs, side by side.
+3. Agreement statistics: both right, only-A-right, only-B-right, and both wrong -- split
+   further into "same predicted label" (the two runs actually agree with each other on the
+   wrong answer -- literally a same-direction failure) vs. "different predicted labels."
+4. (`queue` only) The IT Support hypothesis, stated and tested rather than assumed: the full
+   destination distribution of all 194 gold IT Support tickets, for both runs, with an explicit
+   plain statement of whether the top destination actually is Technical Support (it is).
+5. 10 misclassified samples per field with real ticket text, gold label, and both runs'
+   predictions -- selected round-robin across the ranked worst-confused pairs (one ticket per
+   pair per pass) so the sample spans multiple failure patterns instead of exhausting the
+   single worst pair first, which technically matches "ranked by count" but would not let a
+   human see more than one failure mode.
+
+Writes `reports/error_analysis.md`. Verify/regenerate with:
+```
+.venv\Scripts\python.exe src\ticket_router\error_analysis.py
+```
+No dependency added -- `collections.Counter` is stdlib; everything else (`pandas`,
+`evaluate.load_predictions`, `metrics.md_table`) was already a project dependency.
+
+### What the report found
+
+**Central question -- answered, not left to interpretation.** Across the 1633-row test split:
+
+| field | both right | only adapter right | only tfidf right | both wrong, SAME label | both wrong, different label |
+| --- | --- | --- | --- | --- | --- |
+| queue | 647 (39.6%) | 150 (9.2%) | 183 (11.2%) | 471 (28.8%) | 182 (11.1%) |
+| priority | 652 (39.9%) | 215 (13.2%) | 322 (19.7%) | 341 (20.9%) | 103 (6.3%) |
+| type | 1310 (80.2%) | 89 (5.5%) | 77 (4.7%) | 157 (9.6%) | 0 (0.0%) |
+
+Of every row where at least one run was wrong, the two runs were wrong TOGETHER 66.2% of the
+time on `queue`, 45.3% on `priority`, and 48.6% on `type` -- and within "wrong together," the
+two runs landed on the exact SAME predicted (wrong) label far more often than not (queue:
+471/653 = 72%; priority: 341/444 = 77%; type: 157/157 = 100%, no exceptions at all). "Wrong
+together" dominates the error population on all three fields, and it is overwhelmingly
+same-direction wrongness, not two models tripping on different things. Two architecturally
+unrelated models converging this strongly on which specific wrong label to pick is the
+signature the instruction described as the taxonomy answer: the confusion is a property of
+what the labels ask two different models to distinguish (e.g. "Product Support" vs.
+"Technical Support," "Problem" vs. "Incident," "high" vs. "medium" priority), not a gap in
+either model's capacity that further tuning would be expected to close on its own.
+
+**Top confused pairs overlap almost one-to-one between the two runs**, confirming this is not
+an artifact of the aggregate statistic alone: for `queue`, both runs' #1/#2/#3 pairs are
+identical in identity and order (`Product Support -> Technical Support`, `IT Support ->
+Technical Support`, `Customer Service -> Technical Support`); for `type`, both runs' entire
+error mass is the same two pairs (`Problem <-> Incident`) with everything else in single
+digits; for `priority`, both runs' top pairs are the same three (`medium<->high`, `low<->
+medium`) in slightly different order.
+
+**IT Support hypothesis: confirmed, not just plausible -- reported plainly since it could have
+gone the other way.** Of the 194 gold IT Support tickets, `qlora-adapter-ckpt1500` predicted
+Technical Support for 139 of them (71.6%) -- the single largest destination by a wide margin
+(next largest: IT Support itself, 16 tickets, 8.2%). `tfidf-baseline` shows the same direction
+at a smaller magnitude: 112/194 (57.7%) also predicted Technical Support, with IT Support
+itself catching more (43/194, 22.2%) than the adapter kept. Both runs' single biggest error on
+this class, by far, is the same absorption in the same direction -- consistent with (2)/(3)
+above rather than a fine-tuning-specific defect.
+
+**Reading the sampled tickets themselves (queue's `Product Support -> Technical Support` pair,
+`priority`'s `high -> medium` pair, `type`'s `Problem -> Incident` pair -- see
+`reports/error_analysis.md` for the full text) supports the same reading**: several of the
+sampled tickets read as genuinely ambiguous between the confused pair even to a human skim (a
+report of a system crash/outage phrased as a request for help reads plausibly as either
+Incident or Problem; a routine "please improve X" ask with no explicit urgency language reads
+plausibly as medium or high priority depending on how much weight the reader puts on the
+underlying business impact) -- consistent with the labels themselves carrying real ambiguity
+that both architectures run into the same way, rather than one model missing something
+extractable from the text that the other one gets.
+
+**Nothing found that contradicts the stated hypothesis in point 4** -- flagging this
+explicitly per the instruction to report plainly if the story did not hold, since it did.
+
+**Files added:** `src/ticket_router/error_analysis.py`, `reports/error_analysis.md`. No other
+file changed -- this step reads `results/results.json` and `data/processed/test.parquet`, it
+does not write to either.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\error_analysis.py
+.venv\Scripts\python.exe -m pytest -q
+```
+`pytest -q`: 11/11 still passing (this step added no new test file -- the script's own
+gold-hash re-check at startup is its correctness guard, matching `evaluate.py`'s step-17
+mechanism rather than duplicating it).
+
+**Next step: not yet specified by Omar. This report is diagnosis only, per explicit
+instruction -- no fix, retraining, hyperparameter, or label-merge decision has been made or
+proposed here; that decision comes after Omar has read `reports/error_analysis.md`.**
