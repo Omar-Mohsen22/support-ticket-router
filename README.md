@@ -220,6 +220,34 @@ pip install -r requirements.txt
    python -m pytest -q
    ```
 
+## Serving
+
+A FastAPI app serves the TF-IDF model (`src/ticket_router/api/app.py`). The adapter is not
+served yet.
+
+1. Build the model artifact. This fits on `train.parquet` and writes `models/tfidf/` without
+   touching `results/`:
+   ```
+   python src/ticket_router/predictors/tfidf_baseline.py --artifact-only
+   ```
+2. Start the server. It loads the artifact once at startup, and refuses to start if the
+   artifact is missing.
+   ```
+   python -m uvicorn ticket_router.api.app:app --app-dir src --port 8000
+   ```
+3. Send a request. `subject` is optional; a missing, empty or blank subject means the body is
+   used alone, as in training. An empty `body` returns 422.
+   ```
+   curl -X POST localhost:8000/predict -H "Content-Type: application/json" \
+     -d '{"subject": "System Failure Caused by Overload", "body": "The investment optimization system encountered a crash, which may be due to data overload or a software bug. After rebooting and reviewing logs, the issue still persists. We need your assistance to resolve this problem."}'
+   ```
+   The response has `queue`, `priority`, `type`, `model` and `latency_ms`. `GET /health`
+   reports whether the model is loaded.
+
+The API builds its input with the same `build_ticket_text()` that built the training data
+(`src/ticket_router/ticket_text.py`). A parity test in `tests/test_api.py` checks that the API
+reproduces `results/tfidf-baseline.predictions.jsonl` exactly on the first 200 test tickets.
+
 ## Limitations
 
 - **English only.** 16,338 of the 28,587 rows in the source file are English, and only those
@@ -230,7 +258,8 @@ pip install -r requirements.txt
   intervals. Small gaps, such as type F1 0.8559 vs 0.8412, may not survive a re-run.
 - **Adapter weights are private for now.** They are hosted in a private Hugging Face repo,
   `Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`, so step 5 of Reproduce needs access to it.
-- **No production serving yet.** Docker, a FastAPI service and CI are planned. The adapter has
+- **Serving is local only, and covers TF-IDF only.** There is a FastAPI service for the TF-IDF
+  model (see Serving). Docker, CI and serving the adapter are planned. So far the adapter has
   only been run as a batch predictor.
 
 ## Data and licensing

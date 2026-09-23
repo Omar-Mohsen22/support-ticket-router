@@ -14,3 +14,7 @@ pyyaml==6.0.3  # step-15: adapter_predictor.py reads train/config.yaml directly 
 peft==0.20.0  # step-15: loads the fine-tuned LoRA adapter (PeftModel.from_pretrained) in adapter_predictor.py -- pinned to the exact version the adapter was trained/pushed with on Colab (see PROGRESS.md's step-07..14 entries), to avoid a version-mismatch loading difference
 bitsandbytes==0.50.2  # step-15: 4-bit NF4 quantized base-model loading in adapter_predictor.py -- same version pinned in the Colab training environment
 torch  # step-15: required by transformers/peft/bitsandbytes for GPU inference in adapter_predictor.py. Deliberately NOT version-pinned -- same reasoning as notebooks/train_qlora.ipynb's install cell: the correct build is tied to whatever CUDA version is on the actual GPU machine this runs on, which is not this repo's business to guess. Install a build matching your own CUDA setup (see pytorch.org) before running adapter_predictor.py
+joblib==1.6.0  # step-26: saves/loads the fitted TF-IDF vectorizer + classifiers (models/tfidf/model.joblib) for the serving API -- already installed as a scikit-learn dependency, now imported directly
+fastapi==0.141.1  # step-26: the serving API (src/ticket_router/api/app.py) -- request/response validation through the project's existing pydantic models
+uvicorn==0.53.0  # step-26: ASGI server that runs the FastAPI app
+httpx==0.28.1  # step-26: required by fastapi.testclient.TestClient in tests/test_api.py -- already installed via openai, now a direct, declared dependency

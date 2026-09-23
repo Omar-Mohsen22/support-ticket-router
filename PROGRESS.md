@@ -3033,3 +3033,127 @@ Git blob. After this commit, the repo is still private, `license` is still `cc-b
 Content is unchanged; only line endings differ from the first upload.
 
 Lesson for future uploads: upload from the Git blob, not the Windows working copy.
+
+## step-26: FastAPI serving, phase 1 -- TF-IDF only
+
+### 0. HF token check (verify only)
+
+The token is now scoped to `model Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora` with
+`repo.content.read`, plus `user Omar-Mohsen22` with `repo.access.read`; global scope is empty.
+**No write permission remains.** `model_info(...)` on the adapter repo still succeeds (private).
+
+### 1. Investigation, reported before any code was written
+
+- **Not persisted.** `tfidf_baseline.py` fitted and predicted in one run, and never saved a
+  model.
+- **Labels.** Label sets come from `data/processed/label_map.json`, via `schema.TicketLabels`.
+  The API reuses them and defines no labels of its own.
+- **A wrong assumption in the instruction.** It assumed the batch predictor calls a function to
+  build its input from subject + body. No such function existed:
+  - `text` was built inline in `make_dataset.py` with `np.where` over the whole DataFrame.
+  - Every consumer reads the prebuilt `text` column: `tfidf_baseline.py`, `make_sft_dataset.py`
+    line 150 (`"content": row["text"]`) and `adapter_predictor.py` line 332
+    (`render_prompt(row["text"], ...)`). None of them builds the text separately, so all of
+    them match `build_ticket_text` by construction.
+- **No empty subjects in the data.** In the processed data, subjects are either null or
+  non-empty (test: 259 null, 0 empty, 0 whitespace-only). A `subject: str` request field would
+  therefore have produced `"\n" + body` for an empty subject, an input never seen in training.
+
+Omar chose to extract a shared function (option a), and to make `subject` optional.
+
+### 2. Shared input function, proven to change nothing
+
+`src/ticket_router/ticket_text.py` defines `has_subject()` and `build_ticket_text(subject,
+body)`. It returns `subject + "\n" + body` when there is a subject, otherwise `body` alone.
+None, NaN, `""` and whitespace-only all mean no subject. `make_dataset.py` now builds
+`has_subject` and `text` with these functions. The splits were regenerated in place, and all
+required checks passed before going further:
+
+- **`git status`:** `test.parquet`, `val.parquet`, `label_map.json` and `data/README.md` are all
+  unchanged, byte-identical to the committed files.
+- **`train.parquet`** (gitignored): the sha256 of its ordered id + `text` + `has_subject` is
+  identical before and after (the same holds for val and test), and the file itself is
+  byte-identical to a pre-change copy.
+- **Gold hash:** `evaluate.compute_gold_hash` on the test ids gives `8841a6d1...`, identical to
+  both entries stored in `results.json` (`random-baseline`, `qlora-adapter-ckpt1500`).
+
+### 3. Persisted TF-IDF artifact
+
+`tfidf_baseline.py` now has `fit_models()` and `save_artifact()`. It writes
+`models/tfidf/model.joblib` (**3,635,302 bytes**) and `models/tfidf/meta.json` (562 bytes). The
+meta records sklearn 1.9.0, joblib 1.6.0, 13,070 train rows, the train id-sequence sha256, both
+model configs, the fields and a created-at timestamp. The new `--artifact-only` flag fits and
+saves without touching `results/`. A full run would rewrite the predictions file and run_meta
+with fresh timings, which is the same class of side effect step-16 had to revert. `models/` is
+gitignored for now; the Docker step decides whether the artifact ships in the image.
+`leakage_check.py` still imports `TFIDF_CONFIG` from this file, and the import was checked.
+
+### 4. API (`src/ticket_router/api/app.py`)
+
+- **Startup.** A lifespan handler loads the artifact once. If it is missing, startup fails
+  with `RuntimeError` naming the build command. This was checked by pointing `MODEL_PATH` at a
+  nonexistent file.
+- **`GET /health`** returns `{"status": "ok", "model": "tfidf-baseline", "model_loaded": true}`.
+- **`POST /predict`:**
+  - Request: `{subject: str | None = None, body: str}`. An empty or whitespace-only body gets a
+    422 from a pydantic validator.
+  - Input: built with `build_ticket_text`.
+  - Response: a `TicketLabels` subclass, so every label is validated against `label_map.json`.
+    It adds `model` and `latency_ms`, which is measured per request around the transform and
+    the 3 predicts.
+- **Out of scope for this step:** no auth, no batch endpoint, no adapter code.
+
+### 5. Tests
+
+`pytest -q`: **26 passed**. That is the previous 11, plus 8 in `test_ticket_text.py` and 7 in
+`test_api.py`.
+
+- **`test_ticket_text.py`:** the join rule; None, NaN, `""`, `"   "` and `"\n\t"` all mean
+  "body alone"; and `build_ticket_text` / `has_subject` reproduce the committed `test` and `val`
+  `text` / `has_subject` columns for every row.
+- **`test_api.py`:**
+  - `/health` returns `model_loaded` true.
+  - Labels are valid for every field.
+  - 422 for a missing, empty or whitespace-only body.
+  - An absent, `""`, `"   "` or `null` subject gives identical predictions.
+  - **Parity:** for the first 200 test rows, the API's predictions match
+    `results/tfidf-baseline.predictions.jsonl` exactly, with 0 mismatches. 26 of those 200
+    rows have no subject, so the body-alone path is covered.
+- **Skip behavior:** `test_api.py` skips with a clear reason if `models/tfidf/` is missing,
+  which is the case on a fresh clone, because `models/` is gitignored. Here it ran; nothing was
+  skipped.
+
+### 6. Real request
+
+Started with `python -m uvicorn ticket_router.api.app:app --app-dir src --port 8000`.
+
+- `GET /health` returned `{"status":"ok","model":"tfidf-baseline","model_loaded":true}`.
+- `POST /predict` with test ticket `tkt_009916` (subject "System Failure Caused by Overload"
+  plus its body) returned `{"queue":"Technical Support","priority":"high","type":"Incident",
+  "model":"tfidf-baseline","latency_ms":19.86...}`, HTTP 200. That is identical to the
+  published TF-IDF prediction for this ticket (gold: Customer Service / high / Incident).
+- A whitespace-only body returned HTTP 422.
+- The server was stopped afterwards.
+
+### Dependencies (named and justified in requirements.txt)
+
+- `fastapi==0.141.1` and `uvicorn==0.53.0` were newly installed.
+- `httpx==0.28.1` (needed by `TestClient`) was already installed via `openai`, and is now
+  declared.
+- `joblib==1.6.0` is **added beyond the three the instruction named.** It was already installed
+  as a scikit-learn dependency, but it is now imported directly to save and load the artifact.
+
+**Files changed:** `src/ticket_router/ticket_text.py` (new), `src/ticket_router/make_dataset.py`,
+`src/ticket_router/predictors/tfidf_baseline.py`, `src/ticket_router/api/__init__.py` and
+`app.py` (new), `tests/test_ticket_text.py` and `tests/test_api.py` (new), `requirements.txt`,
+`.gitignore` (`models/`), `README.md` (Serving section; the Limitations bullet no longer says
+there is no FastAPI service), `PROGRESS.md`.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\predictors\tfidf_baseline.py --artifact-only
+.venv\Scripts\python.exe -m pytest -q
+.venv\Scripts\python.exe -m uvicorn ticket_router.api.app:app --app-dir src --port 8000
+```
+
+**Next step: serve the adapter (phase 2), or Dockerize the TF-IDF service -- Omar's call.**

@@ -25,6 +25,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# Make `ticket_router` importable when this file is run directly.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from ticket_router.ticket_text import build_ticket_text, has_subject
+
 # ----------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------
@@ -203,12 +208,12 @@ def main() -> None:
     print(f"  rows remaining: {len(df)}")
 
     # --- Build `text` (input) and `has_subject` -------------------------------
-    df["has_subject"] = df["subject"].notna()
+    # Step-26: built by the shared ticket_text module, which the serving API also calls.
+    df["has_subject"] = df["subject"].map(has_subject)
     n_no_subject = int((~df["has_subject"]).sum())
     print(f"\nRows with no subject (body used alone): {n_no_subject} "
           f"({n_no_subject / len(df):.2%} of remaining rows)")
-    subject_filled = df["subject"].fillna("")
-    df["text"] = np.where(df["has_subject"], subject_filled + "\n" + df["body"], df["body"])
+    df["text"] = [build_ticket_text(s, b) for s, b in zip(df["subject"], df["body"])]
 
     # --- Drop exact duplicates on `text` --------------------------------------
     n_before_dedup = len(df)

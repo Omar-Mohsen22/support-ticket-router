@@ -54,5 +54,9 @@ data/processed/*
 # but excluded defensively since train/config.yaml references outputs/*.
 outputs/
 
+# step-26: serving artifacts (models/tfidf/ from tfidf_baseline.py). Regenerable in seconds;
+# whether they ship inside the Docker image is decided in the Docker step.
+models/
+
 # Temporary Colab transfer bundle (eval outputs downloaded from Colab) -- never part of the repo.
 eval-bundle.zip

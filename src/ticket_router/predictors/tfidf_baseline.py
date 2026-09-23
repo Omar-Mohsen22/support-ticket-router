@@ -12,19 +12,29 @@ A single sensible TF-IDF + logistic regression configuration is used
 throughout. This is deliberately NOT tuned -- a competitive score is not the
 point; a same-order-of-magnitude signal check is.
 
+Step-26: every run also saves the fitted vectorizer + classifiers to
+models/tfidf/ (joblib) with a meta.json, for the serving API. Use
+--artifact-only to fit and save WITHOUT rewriting results/ (a full run
+rewrites the predictions file and run_meta with fresh timings).
+
 Run from the repo root:
     .venv\\Scripts\\python.exe src\\ticket_router\\predictors\\tfidf_baseline.py   (Windows)
     .venv/bin/python src/ticket_router/predictors/tfidf_baseline.py                 (POSIX)
+    .venv\\Scripts\\python.exe src\\ticket_router\\predictors\\tfidf_baseline.py --artifact-only
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
+import joblib
 import pandas as pd
+import sklearn
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.multiclass import OneVsRestClassifier
@@ -32,11 +42,15 @@ from sklearn.multiclass import OneVsRestClassifier
 # Make `ticket_router` importable when this file is run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from ticket_router.evaluate import compute_gold_hash
 from ticket_router.run_meta import no_training_cost, write_run_meta
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 RESULTS_DIR = REPO_ROOT / "results"
+MODEL_DIR = REPO_ROOT / "models" / "tfidf"
+MODEL_PATH = MODEL_DIR / "model.joblib"
+MODEL_META_PATH = MODEL_DIR / "meta.json"
 
 TRAIN_SPLIT = "train"
 PREDICT_SPLIT = "test"
@@ -50,7 +64,56 @@ TFIDF_CONFIG = dict(max_features=20_000, ngram_range=(1, 2), stop_words="english
 LOGREG_CONFIG = dict(max_iter=1000, random_state=SEED)  # max_iter raised only so lbfgs converges
 
 
+def fit_models(train: pd.DataFrame) -> tuple[TfidfVectorizer, dict, float]:
+    """Fit the vectorizer on train text only, then one classifier per field.
+    Returns (vectorizer, classifiers_by_field, total_fit_seconds)."""
+    print("Fitting TF-IDF vectorizer on train text only ...")
+    vectorizer = TfidfVectorizer(**TFIDF_CONFIG)
+    X_train = vectorizer.fit_transform(train["text"])
+    print(f"  vocabulary size: {len(vectorizer.vocabulary_)}")
+
+    classifiers = {}
+    total_fit_s = 0.0
+    for field in TARGET_FIELDS:
+        print(f"\nTraining one-vs-rest logistic regression for `{field}` "
+              f"({train[field].nunique()} classes) ...")
+        clf = OneVsRestClassifier(LogisticRegression(**LOGREG_CONFIG))
+        t0 = time.perf_counter()
+        clf.fit(X_train, train[field])
+        fit_s = time.perf_counter() - t0
+        total_fit_s += fit_s
+        classifiers[field] = clf
+        print(f"  fit: {fit_s:.2f}s  |  train accuracy: {clf.score(X_train, train[field]):.4f}")
+    return vectorizer, classifiers, total_fit_s
+
+
+def save_artifact(vectorizer: TfidfVectorizer, classifiers: dict, train: pd.DataFrame) -> None:
+    """Write the fitted models to models/tfidf/ for the serving API. Only load
+    this file from a trusted source: joblib files are pickles."""
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump({"vectorizer": vectorizer, "classifiers": classifiers}, MODEL_PATH)
+    meta = {
+        "model": RUN_NAME,
+        "sklearn_version": sklearn.__version__,
+        "joblib_version": joblib.__version__,
+        "train_rows": len(train),
+        "train_id_sequence_sha256": compute_gold_hash(train["id"].tolist()),
+        "tfidf_config": TFIDF_CONFIG,
+        "logreg_config": LOGREG_CONFIG,
+        "fields": TARGET_FIELDS,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    MODEL_META_PATH.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    print(f"\nSaved model artifact to {MODEL_PATH} ({MODEL_PATH.stat().st_size:,} bytes) "
+          f"and {MODEL_META_PATH}")
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifact-only", action="store_true",
+                        help="Fit and save models/tfidf/ only; do not predict or touch results/.")
+    args = parser.parse_args()
+
     train_path = PROCESSED_DIR / f"{TRAIN_SPLIT}.parquet"
     test_path = PROCESSED_DIR / f"{PREDICT_SPLIT}.parquet"
     for p in (train_path, test_path):
@@ -64,33 +127,18 @@ def main() -> None:
     print(f"TF-IDF config: {TFIDF_CONFIG}")
     print(f"LogisticRegression config: {LOGREG_CONFIG} (wrapped in OneVsRestClassifier)\n")
 
-    print("Fitting TF-IDF vectorizer on train text only ...")
-    vectorizer = TfidfVectorizer(**TFIDF_CONFIG)
-    X_train = vectorizer.fit_transform(train["text"])
-    X_test = vectorizer.transform(test["text"])
-    print(f"  vocabulary size: {len(vectorizer.vocabulary_)}")
+    vectorizer, classifiers, total_fit_s = fit_models(train)
+    save_artifact(vectorizer, classifiers, train)
+    if args.artifact_only:
+        return
 
+    X_test = vectorizer.transform(test["text"])
     predictions = {}
     total_predict_s = 0.0
-    total_fit_s = 0.0
     for field in TARGET_FIELDS:
-        print(f"\nTraining one-vs-rest logistic regression for `{field}` "
-              f"({train[field].nunique()} classes) ...")
-        clf = OneVsRestClassifier(LogisticRegression(**LOGREG_CONFIG))
-
         t0 = time.perf_counter()
-        clf.fit(X_train, train[field])
-        fit_s = time.perf_counter() - t0
-        total_fit_s += fit_s
-
-        t0 = time.perf_counter()
-        preds = clf.predict(X_test)
-        predict_s = time.perf_counter() - t0
-        total_predict_s += predict_s
-
-        predictions[field] = preds
-        train_acc = clf.score(X_train, train[field])
-        print(f"  fit: {fit_s:.2f}s  |  predict: {predict_s:.3f}s  |  train accuracy: {train_acc:.4f}")
+        predictions[field] = classifiers[field].predict(X_test)
+        total_predict_s += time.perf_counter() - t0
 
     # sklearn predicts the whole test set in one batch, not one row at a time
     # like an API call -- latency_ms below is the total predict time across
