@@ -3017,3 +3017,19 @@ by scratch scripts outside the repo.
 
 **Next step: decide whether to make the GitHub repo and the HF adapter repo public. If the HF
 repo goes public, consider narrowing the token's scope to this one repo first.**
+
+### Correction (same step, after the first push)
+
+The "byte-identical, 7,353 bytes" check above compared the Hub file against the Windows working
+copy, which has CRLF line endings. Git (`core.autocrlf=true`) stores `model_card/README.md` with
+LF, as a 7,190-byte blob. The 163-byte difference is one CR per line, 163 lines. So the first
+upload was NOT byte-identical to the GitHub source.
+
+Fixed by re-uploading the exact committed blob (`git show HEAD:model_card/README.md`, 0 CR
+characters) in HF commit `1cf69a4c` ("Normalize model card line endings to LF (match the GitHub
+source)"). A re-download confirms the Hub `README.md` is now 7,190 bytes and identical to the
+Git blob. After this commit, the repo is still private, `license` is still `cc-by-nc-4.0`,
+`base_model` is still correct, and `adapter_model.safetensors` is still 73,911,112 bytes.
+Content is unchanged; only line endings differ from the first upload.
+
+Lesson for future uploads: upload from the Git blob, not the Windows working copy.
