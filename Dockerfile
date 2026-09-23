@@ -28,6 +28,7 @@ RUN python src/ticket_router/inspect_data.py \
  && python src/ticket_router/make_dataset.py \
  && python src/ticket_router/check_gold_hash.py \
  && python src/ticket_router/predictors/tfidf_baseline.py --artifact-only \
+ && python src/ticket_router/diagnose_tfidf.py \
  && rm -f data/raw/*.csv \
  && chown -R user:user /app
 

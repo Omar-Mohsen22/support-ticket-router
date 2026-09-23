@@ -82,12 +82,18 @@ def test_parity_with_published_predictions(client):
             row = json.loads(line)
             published[row["id"]] = {k: row[k] for k in ("queue", "priority", "type")}
 
-    mismatches = []
+    mismatches = []  # (id, field, api value, published value), one entry per differing field
     for ticket in test.itertuples():
         subject = ticket.subject if isinstance(ticket.subject, str) else None
         r = client.post("/predict", json={"subject": subject, "body": ticket.body})
         assert r.status_code == 200, (ticket.id, r.text)
-        got = {k: r.json()[k] for k in ("queue", "priority", "type")}
-        if got != published[ticket.id]:
-            mismatches.append((ticket.id, got, published[ticket.id]))
-    assert not mismatches, f"{len(mismatches)} of {PARITY_ROWS} rows differ: {mismatches[:10]}"
+        for field in ("queue", "priority", "type"):
+            if r.json()[field] != published[ticket.id][field]:
+                mismatches.append((ticket.id, field, r.json()[field], published[ticket.id][field]))
+
+    n_rows = len({m[0] for m in mismatches})
+    per_field = {f: sum(1 for m in mismatches if m[1] == f) for f in ("queue", "priority", "type")}
+    listing = "\n".join(f"  {i} | {f} | api={a} | published={p}" for i, f, a, p in mismatches)
+    assert not mismatches, (
+        f"{n_rows} of {PARITY_ROWS} rows differ; per field: {per_field}\n{listing}"
+    )
