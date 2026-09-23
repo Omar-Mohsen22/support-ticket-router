@@ -1,8 +1,13 @@
 """Serving API tests (step-26). Needs the TF-IDF artifact:
     python src/ticket_router/predictors/tfidf_baseline.py --artifact-only
+
+Locally, a missing artifact skips these tests. With CI=true it fails the run
+instead (step-27): in CI the artifact is built into the image, so a missing
+one means the build is broken, not that the tests don't apply.
 """
 
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -14,11 +19,12 @@ from ticket_router.predictors.tfidf_baseline import MODEL_PATH
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LABEL_MAP = json.loads((REPO_ROOT / "data" / "processed" / "label_map.json").read_text(encoding="utf-8"))
 PARITY_ROWS = 200
+MISSING_ARTIFACT = f"TF-IDF artifact missing at {MODEL_PATH} -- run tfidf_baseline.py --artifact-only first"
 
-pytestmark = pytest.mark.skipif(
-    not MODEL_PATH.exists(),
-    reason="models/tfidf/ artifact missing -- run tfidf_baseline.py --artifact-only first",
-)
+if not MODEL_PATH.exists() and os.environ.get("CI", "").lower() == "true":
+    pytest.fail(f"CI=true: {MISSING_ARTIFACT}", pytrace=False)
+
+pytestmark = pytest.mark.skipif(not MODEL_PATH.exists(), reason=MISSING_ARTIFACT)
 
 
 @pytest.fixture(scope="module")

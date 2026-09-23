@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE: ticket-router:ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t "$IMAGE" .
+
+      - name: Image size and installed packages
+        run: |
+          docker image ls "$IMAGE"
+          echo "size_bytes=$(docker image inspect "$IMAGE" --format '{{.Size}}')"
+          docker run --rm "$IMAGE" pip freeze | tee pip-freeze.txt
+          echo "packages=$(wc -l < pip-freeze.txt)"
+
+      - name: Tests inside the image
+        run: docker run --rm -e CI=true "$IMAGE" python -m pytest -q -rs -p no:cacheprovider
+
+      - name: Start the container and check /health and /predict
+        run: |
+          set -eu
+          docker run -d --name api -p 7860:7860 "$IMAGE"
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null localhost:7860/health; then break; fi
+            sleep 1
+          done
+          code=$(curl -s -o health.json -w '%{http_code}' localhost:7860/health)
+          echo "GET /health -> HTTP $code: $(cat health.json)"
+          test "$code" = 200
+          cat > request.json <<'EOF'
+          {"subject": "System Failure Caused by Overload", "body": "The investment optimization system encountered a crash, which may be due to data overload or a software bug. After rebooting and reviewing logs, the issue still persists. We need your assistance to resolve this problem."}
+          EOF
+          code=$(curl -s -o predict.json -w '%{http_code}' -X POST localhost:7860/predict \
+            -H 'Content-Type: application/json' --data @request.json)
+          echo "POST /predict -> HTTP $code: $(cat predict.json)"
+          test "$code" = 200
+
+      - name: Container logs
+        if: always()
+        run: docker logs api 2>&1 || true

@@ -3,6 +3,7 @@
 ## Source
 
 - Hugging Face dataset: [`Tobi-Bueck/customer-support-tickets`](https://huggingface.co/datasets/Tobi-Bueck/customer-support-tickets)
+- Revision: `ddf1c81a5475992c4fa6752bf1e8b4e31f07bbeb` (the exact Hub commit `inspect_data.py` downloads from; pinned, not `main`)
 - License: **CC-BY-NC-4.0** (Creative Commons Attribution-NonCommercial 4.0) -- **non-commercial use only**.
 - The tickets in this dataset are **synthetic** (LLM-generated), not real customer correspondence.
 

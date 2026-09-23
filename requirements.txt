@@ -1,12 +1,7 @@
 # Each package here is named and justified in the step's report/commit before it lands.
-pandas==3.0.5  # step-01: CSV loading, dtype inspection, value_counts, null-rate and dedup checks
-pyarrow==25.0.1  # step-02: parquet read/write engine for pandas (no pure-stdlib way to write parquet)
-numpy==2.5.3  # step-02: seeded RNG (default_rng) for the stratified split, vectorized text-concat
-pydantic==2.13.5  # step-03: TicketLabels schema -- validates a prediction's queue/priority/type against label_map.json's exact allowed values
-pytest==9.1.1  # step-03: test runner for tests/test_metrics.py
+-r requirements-serve.txt  # step-27: serving/test subset; the pins below are only for the LLM/GPU work
 openai==3.11.0  # step-04: official SDK for calling the OpenAI API (api_predictor.py) -- auth, structured-output requests, and built-in rate-limit backoff, instead of hand-rolling HTTP + retry logic
 python-dotenv==1.2.3  # step-04: load_dotenv(override=True) so the project's .env always wins over a stale/ambient OS environment variable of the same name
-scikit-learn==1.9.0  # step-04b: TfidfVectorizer + OneVsRestClassifier(LogisticRegression) for the classical ML baseline (tfidf_baseline.py) -- the model itself, not a metrics helper (metrics.py stays hand-rolled, per step-03's dependency-minimalism choice)
 tiktoken==0.14.0  # step-06: OpenAI's tokenizer -- kept ONLY for the side-by-side comparison against the actual fine-tuning target's tokenizer in make_sft_dataset.py; not used for the max_seq_len recommendation (see transformers below)
 transformers==5.17.0  # step-06: AutoTokenizer -- loads the ACTUAL QLoRA fine-tuning target's (FT_BASE_MODEL, e.g. Qwen2.5-1.5B-Instruct) tokenizer and chat template, since that -- not OpenAI's tokenizer -- is what determines a real max_seq_len. No torch needed for this (tokenizer/config loading only, no model weights)
 jinja2==3.1.6  # step-06: required by transformers' apply_chat_template() to render the target model's Jinja2 chat template
@@ -14,7 +9,3 @@ pyyaml==6.0.3  # step-15: adapter_predictor.py reads train/config.yaml directly 
 peft==0.20.0  # step-15: loads the fine-tuned LoRA adapter (PeftModel.from_pretrained) in adapter_predictor.py -- pinned to the exact version the adapter was trained/pushed with on Colab (see PROGRESS.md's step-07..14 entries), to avoid a version-mismatch loading difference
 bitsandbytes==0.50.2  # step-15: 4-bit NF4 quantized base-model loading in adapter_predictor.py -- same version pinned in the Colab training environment
 torch  # step-15: required by transformers/peft/bitsandbytes for GPU inference in adapter_predictor.py. Deliberately NOT version-pinned -- same reasoning as notebooks/train_qlora.ipynb's install cell: the correct build is tied to whatever CUDA version is on the actual GPU machine this runs on, which is not this repo's business to guess. Install a build matching your own CUDA setup (see pytorch.org) before running adapter_predictor.py
-joblib==1.6.0  # step-26: saves/loads the fitted TF-IDF vectorizer + classifiers (models/tfidf/model.joblib) for the serving API -- already installed as a scikit-learn dependency, now imported directly
-fastapi==0.141.1  # step-26: the serving API (src/ticket_router/api/app.py) -- request/response validation through the project's existing pydantic models
-uvicorn==0.53.0  # step-26: ASGI server that runs the FastAPI app
-httpx==0.28.1  # step-26: required by fastapi.testclient.TestClient in tests/test_api.py -- already installed via openai, now a direct, declared dependency

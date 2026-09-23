@@ -1,0 +1,26 @@
+# Allowlist: nothing enters the build context unless it is listed here.
+*
+!requirements-serve.txt
+!pytest.ini
+!src/
+!tests/
+!data/processed/label_map.json
+!data/processed/test.parquet
+!data/processed/val.parquet
+!results/
+
+# Explicit denies. These come after the allowlist, so they win even inside an allowed directory.
+**/.env
+**/.env.*
+**/*.key
+**/*.pem
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ipynb_checkpoints
+.venv/
+models/
+.cache/
+data/raw/
+notebooks/
+eval-bundle.zip

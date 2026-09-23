@@ -244,6 +244,19 @@ served yet.
    The response has `queue`, `priority`, `type`, `model` and `latency_ms`. `GET /health`
    reports whether the model is loaded.
 
+**With Docker.** The image downloads the dataset at a pinned Hub revision, rebuilds the splits,
+checks that the test split matches the one every published result used, and fits the TF-IDF
+artifact, all at build time. It serves on port 7860, which is the Hugging Face Docker Space
+default; set `PORT` to override.
+```
+docker build -t ticket-router .
+docker run --rm -e CI=true ticket-router python -m pytest -q -rs -p no:cacheprovider
+docker run --rm -p 7860:7860 ticket-router
+curl localhost:7860/health
+```
+CI (`.github/workflows/ci.yml`) runs the same build, runs the tests inside the image, then
+starts the container and checks `/health` and `/predict`.
+
 The API builds its input with the same `build_ticket_text()` that built the training data
 (`src/ticket_router/ticket_text.py`). A parity test in `tests/test_api.py` checks that the API
 reproduces `results/tfidf-baseline.predictions.jsonl` exactly on the first 200 test tickets.

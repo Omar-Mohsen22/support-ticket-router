@@ -28,6 +28,7 @@ import pandas as pd
 # Make `ticket_router` importable when this file is run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from ticket_router.inspect_data import DATASET_REVISION
 from ticket_router.ticket_text import build_ticket_text, has_subject
 
 # ----------------------------------------------------------------------
@@ -308,6 +309,8 @@ def build_data_readme(*, n_raw, n_english, queue_counts_en, n_body_missing, n_ta
     lines.append(
         "- Hugging Face dataset: [`Tobi-Bueck/customer-support-tickets`]"
         "(https://huggingface.co/datasets/Tobi-Bueck/customer-support-tickets)\n"
+        f"- Revision: `{DATASET_REVISION}` (the exact Hub commit `inspect_data.py` downloads "
+        "from; pinned, not `main`)\n"
         "- License: **CC-BY-NC-4.0** (Creative Commons Attribution-NonCommercial 4.0) -- "
         "**non-commercial use only**.\n"
         "- The tickets in this dataset are **synthetic** (LLM-generated), not real customer "

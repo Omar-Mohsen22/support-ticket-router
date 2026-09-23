@@ -1,0 +1,13 @@
+# Step-27: the subset needed to build the data, fit the TF-IDF artifact, serve the API and run
+# the tests -- all the Dockerfile installs. requirements.txt includes this file, so each pin
+# lives in exactly one place.
+pandas==3.0.5  # step-01: CSV loading, dtype inspection, value_counts, null-rate and dedup checks
+pyarrow==25.0.1  # step-02: parquet read/write engine for pandas (no pure-stdlib way to write parquet)
+numpy==2.5.3  # step-02: seeded RNG (default_rng) for the stratified split, vectorized text-concat
+pydantic==2.13.5  # step-03: TicketLabels schema -- validates a prediction's queue/priority/type against label_map.json's exact allowed values
+pytest==9.1.1  # step-03: test runner for tests/test_metrics.py
+scikit-learn==1.9.0  # step-04b: TfidfVectorizer + OneVsRestClassifier(LogisticRegression) for the classical ML baseline (tfidf_baseline.py) -- the model itself, not a metrics helper (metrics.py stays hand-rolled, per step-03's dependency-minimalism choice)
+joblib==1.6.0  # step-26: saves/loads the fitted TF-IDF vectorizer + classifiers (models/tfidf/model.joblib) for the serving API -- already installed as a scikit-learn dependency, now imported directly
+fastapi==0.141.1  # step-26: the serving API (src/ticket_router/api/app.py) -- request/response validation through the project's existing pydantic models
+uvicorn==0.53.0  # step-26: ASGI server that runs the FastAPI app
+httpx==0.28.1  # step-26: required by fastapi.testclient.TestClient in tests/test_api.py -- already installed via openai, now a direct, declared dependency

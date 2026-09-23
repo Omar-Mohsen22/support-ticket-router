@@ -26,6 +26,10 @@ from pathlib import Path
 import pandas as pd
 
 REPO_ID = "Tobi-Bueck/customer-support-tickets"
+# Step-27: pinned to the exact Hub commit the committed splits were built from, so a later
+# upstream change cannot silently change the data. Full sha read from the Hub API; each file at
+# this revision was checked byte-for-byte against the originally downloaded copies.
+DATASET_REVISION = "ddf1c81a5475992c4fa6752bf1e8b4e31f07bbeb"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = REPO_ROOT / "data" / "raw"
 REPORT_PATH = REPO_ROOT / "reports" / "data_report.md"
@@ -60,7 +64,7 @@ def hf_api_get(url: str) -> object:
 
 def list_repo_files(repo_id: str) -> list[dict]:
     """Return every file in the dataset repo (path + exact size in bytes)."""
-    url = f"https://huggingface.co/api/datasets/{repo_id}/tree/main"
+    url = f"https://huggingface.co/api/datasets/{repo_id}/tree/{DATASET_REVISION}"
     return hf_api_get(url)
 
 
@@ -69,7 +73,7 @@ def download_file(repo_id: str, filename: str, size: int, dest: Path) -> None:
     if dest.exists() and dest.stat().st_size == size:
         print(f"  already present ({size:,} bytes), skipping download: {dest.name}")
         return
-    url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{filename}"
+    url = f"https://huggingface.co/datasets/{repo_id}/resolve/{DATASET_REVISION}/{filename}"
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     print(f"  downloading {filename} ({size:,} bytes)...")
     with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as out:
