@@ -2937,3 +2937,83 @@ confirms the committed tables are exactly what the script generates.
 
 **Next step: decide whether to make the GitHub repo (and the Hugging Face adapter repo)
 public.**
+
+## step-25: model card for the adapter; stray scaler.pt removed from the HF repo
+
+Repo: `Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`. It stays PRIVATE.
+
+### Pre-checks
+
+The first attempt stopped here because `.env` had no `HF_TOKEN` key at all. Omar added a
+fine-grained token, and the step was re-run from the top.
+
+- **Account and access.** `whoami()` returns `Omar-Mohsen22`. The token is fine-grained with
+  `repo.write` (plus `repo.content.read`, `repo.access.read`, `discussion.write`). Its scope
+  entity is `user Omar-Mohsen22`, not this single repo, so in practice it has write access to
+  every repo of that user. Reported to Omar, not changed here.
+- **Repo files before changes:** `.gitattributes` 1,570, `README.md` 5,218,
+  `adapter_config.json` 1,159, `adapter_model.safetensors` 73,911,112, `chat_template.jinja`
+  2,507, `scaler.pt` 1,383, `tokenizer.json` 11,421,892, `tokenizer_config.json` 694. Two
+  differences from the expected list were reported before anything was touched:
+  - `.gitattributes`: the standard file every HF repo gets on creation.
+  - `README.md`: the empty auto-generated PEFT template, with "[More Information Needed]" in
+    every section, uploaded with the adapter in commit `91861f97`. Nothing custom was in it.
+- **Base model licence**, from `model_info("Qwen/Qwen2.5-1.5B-Instruct").card_data`:
+  `license: apache-2.0`, with a `license_link` to the model's `LICENSE` file.
+- **Published `adapter_config.json` matches `train/config.yaml`:** base model, r=16, alpha=32,
+  dropout 0.05, and the same 7 target modules. This was asserted in the generator.
+
+### The model card
+
+`model_card/README.md` is the source of truth. The same file was uploaded as `README.md` in HF
+commit `1bbbcb0d` ("Add model card"). The Hub copy was re-downloaded and verified
+byte-identical (7,353 bytes, same sha256).
+
+- **Metadata:** the YAML front matter was set exactly as specified (`license: cc-by-nc-4.0`,
+  `base_model`, `library_name: peft`, dataset, `en`, `text-generation`, the four tags).
+- **Generated from repo files.** The body was built by a one-off generator script in the
+  session scratchpad (not committed). It reads every number from `results/results.json`,
+  `results/full_val_losses.json`, `train/config.yaml`, the Hub's `adapter_config.json`,
+  `data/processed/label_map.json` and the split parquet files (train 13,070, val 1,635). The
+  base model licence was read live from the Hub. The card is a static snapshot, so re-run a
+  generator if the numbers change.
+- **Usage snippet.** It mirrors `adapter_predictor.py`: tokenizer from the base model, pad =
+  eos if unset, left padding, the same 4-bit config, and the runtime bf16/fp16 choice. It uses
+  `apply_chat_template(tokenize=False, add_generation_prompt=True)`, then tokenizes separately
+  with `add_special_tokens=False`, `max_length` 384, `do_sample=False` and `max_new_tokens` 64.
+  The system prompt is embedded verbatim from `build_system_message(label_map)`, not retyped.
+  The snippet was checked with `ast.parse`, but NOT run: there is no GPU here. The example
+  ticket in it is illustrative input, not data.
+- **Licence section.** The adapter is CC-BY-NC-4.0 because its training data is, so it is for
+  non-commercial use only. The base model keeps its own licence, `apache-2.0` per its Hub
+  metadata. No other legal claims are made.
+- **One wording fix before upload.** "mostly fail on the same tickets" became "often fail on
+  the same tickets and usually pick the same wrong label". Both-wrong is 66.2% of errors on
+  queue but 45.3% on priority and 48.6% on type, so "mostly" overstated it.
+
+### scaler.pt removed
+
+It was deleted in its own HF commit, `466a328d` ("Remove stray scaler.pt (GradScaler state, not
+needed for inference)").
+
+### Verified after the changes
+
+- Files: `.gitattributes` 1,570, `README.md` 7,353, `adapter_config.json` 1,159,
+  `adapter_model.safetensors` 73,911,112 (unchanged), `chat_template.jinja` 2,507,
+  `tokenizer.json` 11,421,892, `tokenizer_config.json` 694. `scaler.pt` is gone.
+- `card_data.license` is `cc-by-nc-4.0`, and `card_data.base_model` is
+  `Qwen/Qwen2.5-1.5B-Instruct`.
+- `private: True`.
+
+No dependency added. `huggingface_hub` (already present transitively in the venv) was used only
+by scratch scripts outside the repo.
+
+**Files changed:** `model_card/README.md` (new), `PROGRESS.md`.
+
+**Verify with** (needs `HF_TOKEN` in `.env`):
+```
+.venv\Scripts\python.exe -c "import os; from dotenv import load_dotenv; from huggingface_hub import HfApi; load_dotenv('.env', override=True); i = HfApi(token=os.environ['HF_TOKEN']).model_info('Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora', files_metadata=True); print(i.private, i.card_data.license, [(s.rfilename, s.size) for s in i.siblings])"
+```
+
+**Next step: decide whether to make the GitHub repo and the HF adapter repo public. If the HF
+repo goes public, consider narrowing the token's scope to this one repo first.**
