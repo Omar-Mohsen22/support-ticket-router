@@ -53,3 +53,6 @@ data/processed/*
 # Hub instead, per train/config.yaml; never expected to exist in this repo,
 # but excluded defensively since train/config.yaml references outputs/*.
 outputs/
+
+# Temporary Colab transfer bundle (eval outputs downloaded from Colab) -- never part of the repo.
+eval-bundle.zip
