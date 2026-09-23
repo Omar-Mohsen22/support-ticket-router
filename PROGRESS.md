@@ -3157,3 +3157,144 @@ there is no FastAPI service), `PROGRESS.md`.
 ```
 
 **Next step: serve the adapter (phase 2), or Dockerize the TF-IDF service -- Omar's call.**
+
+## step-27: Dockerfile + CI for the TF-IDF API; serve the exact evaluated artifact
+
+### The local CPU probe was cancelled
+
+The first version of step-27 was a local CPU feasibility probe for the adapter. It stopped
+before anything was installed or written. The laptop has 11.7 GB RAM with only 1.5 GB free at
+the time, and the pagefile was already 8.2 GB into use. That is not enough for an unquantized
+1.5B model, which needs about 6.2 GB of weights in fp32 or about 3.1 GB in bf16. Omar then set
+the deployment target to a Hugging Face Docker Space (CPU Basic: 2 vCPU, 16 GB RAM), so the
+12 GB laptop is not the target. The adapter will be measured there in a later step. Nothing
+from the probe was installed or committed.
+
+### Dataset pinned; requirements split
+
+- **Pinned dataset revision.** `inspect_data.py` now downloads from Hub revision
+  `ddf1c81a5475992c4fa6752bf1e8b4e31f07bbeb` (the full sha, read from the Hub API), via
+  `tree/<sha>` and `resolve/<sha>/<file>`, instead of `main`. All 3 files at that revision were
+  checked byte-for-byte against the originally downloaded copies:
+  - the two LFS files by sha256;
+  - the German file, which is not in LFS, by its git-blob sha1.
+- **Recorded in the data card.** `make_dataset.py` writes the revision into `data/README.md`.
+  Regenerating everything changed only that one line: splits, `label_map.json` and
+  `reports/data_report.md` are all unchanged.
+- **Requirements split.** `requirements-serve.txt` holds exactly the 10 packages the data build,
+  the TF-IDF artifact, the API and the tests import: pandas, pyarrow, numpy, pydantic,
+  scikit-learn, joblib, fastapi, uvicorn, httpx, pytest. `requirements.txt` starts with
+  `-r requirements-serve.txt`, so each pin lives in one place. The image installs only the serve
+  file. The full file would pull an unpinned torch, which on Linux is a CUDA build with nvidia
+  libraries of several GB.
+
+### Windows-vs-Linux refit: the finding, with numbers
+
+The first CI design fitted TF-IDF inside the Docker build. Two runs (`35896503865` and
+`35898329488`) failed the parity test the same way: **14 of the first 200 test rows**
+differed from the published (Windows-fit) predictions. That was 15 field-level differences:
+queue 5, priority 6, type 4. The diagnosis run (`35898329488`, `diagnose_tfidf.py` inside the
+build) found:
+
+- **The data is identical.** Train sha256 over text + labels is `c9f82636...c929` on both
+  Windows and Linux. Val is `edb25863...d25e` on both. The test split passed the gold-hash
+  check.
+- **Package versions are the same** for numpy 2.5.3, scipy 1.18.1, scikit-learn 1.9.0 and
+  joblib 1.6.0. Only threadpoolctl (3.6.0 local vs 3.7.0) and idna differ.
+- **No convergence problem.** 0 ConvergenceWarnings on both sides; n_iter_ was 14-52 against
+  `max_iter=1000`.
+- **But the optimizer path differed.** n_iter_ differed in 14 of the 17 one-vs-rest estimators.
+  For example, type/Problem took 40 iterations on Windows and 52 on Linux. On each machine, the
+  refit matched its own artifact.
+
+Reading, not proven: floating-point results differ between the two environments, so lbfgs stops
+at different points inside `tol`, and borderline tickets flip.
+
+**The sensitivity job then contradicted the finding.** The dedicated `refit-sensitivity` job in
+run `35899571019` refitted on Linux (same image, `ubuntu-24.04`) and measured **0 differing test
+rows** out of 1,633. Its macro-F1 and exact match were identical to the published ones. So a
+Linux refit is not always different: two runs differed (14 of the first 200 rows) and one did
+not (0 of 1,633).
+
+The CPU model of each runner was not logged, so what changed between those runs is unverified.
+A likely candidate is the runner hardware, since GitHub-hosted VMs do not all have the same CPU,
+and BLAS picks kernels per CPU. What is established: a refit is not guaranteed to reproduce the
+published model, while the committed artifact always does.
+
+### Decision: serve the exact evaluated artifact
+
+Serving is decoupled from refitting.
+
+- **Checked first.** The Windows-built `models/tfidf/model.joblib` reproduced
+  `results/tfidf-baseline.predictions.jsonl` on **all 1,633 test rows**, with 0 field
+  mismatches.
+- **Committed.** `.gitignore` un-ignores exactly `models/tfidf/model.joblib` and
+  `models/tfidf/meta.json`. The artifact is 3,635,302 bytes, sha256
+  `b118960f60410d3c930eba6fc26056c5f01e88b343ce1338332316ea74683447`. That sha256 was added to
+  `meta.json`, and `save_artifact()` now records it for future artifacts. A new `.gitattributes`
+  marks `*.joblib` as binary, so line-ending conversion can never touch it. The staged blob was
+  verified to be the same sha256.
+- **Licence.** The README's "Data and licensing" section now states that the artifact is
+  derived from the CC-BY-NC-4.0 data and carries the same licence.
+- **Dockerfile.** No fit step. It copies the committed artifact, and `check_artifact.py` fails
+  the build if its sha256 does not match `meta.json`. The data download (pinned revision),
+  `make_dataset.py` and `check_gold_hash.py` stay, because the tests need `test.parquet`.
+- **Parity test.** It now covers all 1,633 test rows instead of 200, the assertion is still
+  exact, and it lists every mismatch.
+- **Kept, but out of the build.** `diagnose_tfidf.py` stays in the repo, but no longer runs
+  during the build.
+- **Warnings against refits.** `tfidf_baseline.py`'s docstring, the README Reproduce step and
+  the API's missing-artifact message all warn that a refit overwrites the committed artifact and
+  is not bit-identical.
+
+### CI
+
+`.github/workflows/ci.yml` runs on push to master and on pull requests, uses no secrets, and is
+pinned to `ubuntu-24.04`. It has two jobs:
+
+- **`docker`:**
+  1. build (sha256 check, pinned download, gold-hash check);
+  2. `pip freeze` and image size;
+  3. `pytest` inside the image with `-e CI=true`, where a missing artifact fails instead of
+     skipping;
+  4. start the container, then `curl /health` and one `/predict`, failing on anything but 200.
+- **`refit-sensitivity`:** builds the image, runs `refit_sensitivity.py`, writes the table to
+  the job summary, and uploads it as a job artifact. The script refits with the unchanged
+  `fit_models()` and scores with `evaluate.evaluate()`. It asserts the published predictions
+  still score exactly as `results.json` says. It never writes under `results/` or `models/`.
+
+**Run `35899571019`** (commit `8787fbb`): both jobs passed, 72 s end to end.
+
+- **Tests in the image:** 26 passed, 0 skipped. The full-split parity test passed:
+  1,633/1,633.
+- **Image:** 659 MB (659,170,774 bytes), 32 packages.
+- **Container checks:**
+  - `GET /health` returned 200: `{"status":"ok","model":"tfidf-baseline","model_loaded":true}`.
+  - `POST /predict` returned 200: Technical Support / high / Incident.
+- **Sensitivity:** queue 0.3683, priority 0.5445 and type 0.8412 macro-F1, and 29.33% exact
+  match, are identical for the published model and the Linux refit, with 0 rows differing per
+  field.
+
+**Warnings left for later:** `actions/checkout@v4` and `upload-artifact@v4` are on the
+deprecated Node 20. Starlette warns that `httpx` with its TestClient is deprecated in favour of
+`httpx2`.
+
+**Files changed (whole step):** `Dockerfile`, `.dockerignore`, `.gitattributes`,
+`.github/workflows/ci.yml`, `.gitignore`, `requirements.txt`, `requirements-serve.txt`,
+`models/tfidf/model.joblib` + `meta.json` (now committed), `src/ticket_router/inspect_data.py`,
+`make_dataset.py`, `check_gold_hash.py`, `check_artifact.py`, `diagnose_tfidf.py`,
+`refit_sensitivity.py`, `predictors/tfidf_baseline.py`, `api/app.py`, `tests/test_api.py`,
+`data/README.md`, `README.md`, `PROGRESS.md`. No new dependency; the serve file only moves
+existing pins.
+
+**Verify with:**
+```
+.venv\Scripts\python.exe src\ticket_router\check_artifact.py
+.venv\Scripts\python.exe src\ticket_router\check_gold_hash.py
+.venv\Scripts\python.exe src\ticket_router\refit_sensitivity.py
+.venv\Scripts\python.exe -m pytest -q
+```
+or push and read both CI jobs.
+
+**Next step: Omar's call. Options: log the runner CPU in the sensitivity job to settle the
+Windows-vs-Linux question; deploy the image to the HF Docker Space; or serve the adapter.**
