@@ -8,6 +8,7 @@
 | api-gpt4o-mini-fewshot-coverage | test | 1633 | 6.86% | 0.00% | 28.54% | 0.2445 | 43.11% | 0.3136 | 52.42% | 0.4327 | 756.10 [OpenAI API] | 1842.95 [OpenAI API] | 0.0000 [api-per-token] | 0.0000 [api-per-token] |
 | api-gpt4o-mini-fewshot-coverage-priority | test | 1633 | 7.04% | 0.00% | 26.94% | 0.2287 | 43.91% | 0.3246 | 54.81% | 0.4738 | 1230.44 [OpenAI API] | 2472.17 [OpenAI API] | 0.0000 [api-per-token] | 0.0000 [api-per-token] |
 | api-gpt4o-mini-fewshot-coverage-median | test | 1633 | 9.06% | 0.00% | 27.99% | 0.2399 | 44.09% | 0.3330 | 66.87% | 0.6687 | 980.63 [OpenAI API] | 27627.84 [OpenAI API] | 0.0000 [api-per-token] | 0.0000 [api-per-token] |
+| qlora-adapter-ckpt1500 | test | 1633 | 26.03% | 0.06% | 48.81% | 0.3999 | 53.09% | 0.4944 | 85.67% | 0.8559 | 304.29 [Tesla T4] | 372.56 [Tesla T4] | 0.0000 [gpu-local] | 0.0000 [gpu-local] |
 
 ## Notes
 
@@ -17,10 +18,11 @@
 
 - `api-per-token`: a hosted API call. The provider doesn't return a live $ figure per request, so a cost_usd of 0 here means UNMEASURED -- compute a real figure externally from the recorded input/output token counts -- not that the call was free.
 - `cpu-local`: runs entirely on a local CPU. A cost_usd of 0 here is real and measured -- genuinely free to run, no ambiguity.
+- `gpu-local`: a self-hosted model that requires a GPU to serve. A cost_usd of 0 here is NOT "free" -- this harness tracks no $/GPU-hour serving rate. See that run's training_cost for what training it actually cost.
 
 **Training cost** (a one-time cost, not part of any single prediction above -- so it is not, and cannot be, folded into `latency_ms` or `cost_usd`):
 
-- (none of the runs above report GPU training hours)
+- `qlora-adapter-ckpt1500`: 3.35 GPU-hour(s). 3.35 GPU-hour(s) on Tesla T4 (Google Colab, free tier) to train this adapter (hub_model_id in train/config.yaml). The $0 training cost is because the free tier absorbed it, not because training itself was free -- and this is a one-time cost, separate from what serving each prediction below costs.
 
 Runs not listed above required no GPU training step of their own -- either a pre-trained hosted API model, or (TF-IDF, the random baseline) a fit measured in seconds of CPU time, not GPU-hours; see each such run's `training_cost.note` in `results/results.json` for the exact figure.
 
