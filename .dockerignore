@@ -8,6 +8,8 @@
 !data/processed/test.parquet
 !data/processed/val.parquet
 !results/
+!models/tfidf/model.joblib
+!models/tfidf/meta.json
 
 # Explicit denies. These come after the allowlist, so they win even inside an allowed directory.
 **/.env
@@ -19,7 +21,6 @@
 **/.pytest_cache
 **/.ipynb_checkpoints
 .venv/
-models/
 .cache/
 data/raw/
 notebooks/

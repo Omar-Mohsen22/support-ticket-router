@@ -1,0 +1,3 @@
+# step-27: never apply line-ending conversion to the committed model artifact; the Docker
+# build verifies its sha256 against models/tfidf/meta.json.
+*.joblib binary

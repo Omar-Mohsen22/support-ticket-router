@@ -56,8 +56,9 @@ class HealthResponse(BaseModel):
 async def lifespan(app: FastAPI):
     if not MODEL_PATH.exists():
         raise RuntimeError(
-            f"TF-IDF model artifact not found at {MODEL_PATH}. Build it first with: "
-            "python src/ticket_router/predictors/tfidf_baseline.py --artifact-only"
+            f"TF-IDF model artifact not found at {MODEL_PATH}. It is committed to git "
+            "(models/tfidf/) -- restore it from there. Rebuilding it with tfidf_baseline.py "
+            "--artifact-only gives a model that is not bit-identical on other platforms."
         )
     artifact = joblib.load(MODEL_PATH)
     app.state.vectorizer = artifact["vectorizer"]

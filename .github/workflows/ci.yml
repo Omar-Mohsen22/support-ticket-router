@@ -52,3 +52,27 @@ jobs:
       - name: Container logs
         if: always()
         run: docker logs api 2>&1 || true
+
+  # Measures how much a Linux refit of TF-IDF moves the metrics. It never touches results/,
+  # results.json or the served artifact; the numbers go to the job summary and a job artifact.
+  refit-sensitivity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      IMAGE: ticket-router:sensitivity
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build --progress=plain -t "$IMAGE" .
+
+      - name: Refit TF-IDF on Linux and score it
+        run: |
+          docker run --name sens "$IMAGE" python src/ticket_router/refit_sensitivity.py --out-dir /tmp/sens
+          docker cp sens:/tmp/sens ./sens
+          cat sens/refit_sensitivity.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: refit-sensitivity
+          path: sens/

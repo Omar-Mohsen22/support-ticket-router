@@ -1,8 +1,8 @@
-"""Serving API tests (step-26). Needs the TF-IDF artifact:
-    python src/ticket_router/predictors/tfidf_baseline.py --artifact-only
+"""Serving API tests (step-26). Needs the committed TF-IDF artifact,
+models/tfidf/model.joblib (committed since step-27).
 
 Locally, a missing artifact skips these tests. With CI=true it fails the run
-instead (step-27): in CI the artifact is built into the image, so a missing
+instead: in CI the committed artifact is copied into the image, so a missing
 one means the build is broken, not that the tests don't apply.
 """
 
@@ -18,8 +18,7 @@ from ticket_router.predictors.tfidf_baseline import MODEL_PATH
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LABEL_MAP = json.loads((REPO_ROOT / "data" / "processed" / "label_map.json").read_text(encoding="utf-8"))
-PARITY_ROWS = 200
-MISSING_ARTIFACT = f"TF-IDF artifact missing at {MODEL_PATH} -- run tfidf_baseline.py --artifact-only first"
+MISSING_ARTIFACT = f"TF-IDF artifact missing at {MODEL_PATH} -- it is committed; restore models/tfidf/ from git"
 
 if not MODEL_PATH.exists() and os.environ.get("CI", "").lower() == "true":
     pytest.fail(f"CI=true: {MISSING_ARTIFACT}", pytrace=False)
@@ -74,8 +73,9 @@ def test_absent_empty_and_blank_subject_all_mean_body_alone(client):
 
 
 def test_parity_with_published_predictions(client):
-    """The API must reproduce results/tfidf-baseline.predictions.jsonl exactly."""
-    test = pd.read_parquet(REPO_ROOT / "data" / "processed" / "test.parquet").head(PARITY_ROWS)
+    """The API must reproduce results/tfidf-baseline.predictions.jsonl exactly, on every
+    row of the test split (step-27; was the first 200)."""
+    test = pd.read_parquet(REPO_ROOT / "data" / "processed" / "test.parquet")
     published = {}
     with open(REPO_ROOT / "results" / "tfidf-baseline.predictions.jsonl", encoding="utf-8") as f:
         for line in f:
@@ -95,5 +95,5 @@ def test_parity_with_published_predictions(client):
     per_field = {f: sum(1 for m in mismatches if m[1] == f) for f in ("queue", "priority", "type")}
     listing = "\n".join(f"  {i} | {f} | api={a} | published={p}" for i, f, a, p in mismatches)
     assert not mismatches, (
-        f"{n_rows} of {PARITY_ROWS} rows differ; per field: {per_field}\n{listing}"
+        f"{n_rows} of {len(test)} rows differ; per field: {per_field}\n{listing}"
     )

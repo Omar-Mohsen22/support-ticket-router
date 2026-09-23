@@ -13,7 +13,13 @@ throughout. This is deliberately NOT tuned -- a competitive score is not the
 point; a same-order-of-magnitude signal check is.
 
 Step-26: every run also saves the fitted vectorizer + classifiers to
-models/tfidf/ (joblib) with a meta.json, for the serving API. Use
+models/tfidf/ (joblib) with a meta.json, for the serving API.
+
+Step-27: models/tfidf/ is COMMITTED -- it is the exact model behind
+results/tfidf-baseline.predictions.jsonl (all 1,633 test rows reproduce).
+Running this script overwrites it. A refit on another platform is NOT
+bit-identical: a Linux refit on the same data changed predictions on some test
+rows (see PROGRESS.md step-27), so do not commit a refit casually. Use
 --artifact-only to fit and save WITHOUT rewriting results/ (a full run
 rewrites the predictions file and run_meta with fresh timings).
 
@@ -26,6 +32,7 @@ Run from the repo root:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -94,6 +101,7 @@ def save_artifact(vectorizer: TfidfVectorizer, classifiers: dict, train: pd.Data
     joblib.dump({"vectorizer": vectorizer, "classifiers": classifiers}, MODEL_PATH)
     meta = {
         "model": RUN_NAME,
+        "model_sha256": hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest(),
         "sklearn_version": sklearn.__version__,
         "joblib_version": joblib.__version__,
         "train_rows": len(train),
