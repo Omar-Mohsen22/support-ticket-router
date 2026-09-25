@@ -277,11 +277,17 @@ reproduces `results/tfidf-baseline.predictions.jsonl` exactly, on all 1,633 test
   real customer correspondence. Results may not transfer to real tickets.
 - **One training run, one seed** (`seed: 42`). There are no repeated runs and no confidence
   intervals. Small gaps, such as type F1 0.8559 vs 0.8412, may not survive a re-run.
+- **Refitting TF-IDF on different hardware changes some predictions.** Two CI runs refitted
+  the baseline on Linux. 0 and 81 of 1633 test rows changed, and
+  macro-F1 moved by at most 0.0027 on any field. The adapter-vs-TF-IDF ordering was
+  unchanged on every field. Two runs are not enough to call this an error margin. The served
+  artifact is the exact evaluated model; CI verifies it on all 1633 test rows.
 - **Adapter weights are private for now.** They are hosted in a private Hugging Face repo,
   `Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`, so step 5 of Reproduce needs access to it.
-- **Serving is local only, and covers TF-IDF only.** There is a FastAPI service for the TF-IDF
-  model (see Serving). Docker, CI and serving the adapter are planned. So far the adapter has
-  only been run as a batch predictor.
+- **Serving covers TF-IDF only, and is not deployed yet.** There is a FastAPI service for the
+  TF-IDF model, and a Docker image that CI builds and tests (see Serving). Deploying to a
+  Hugging Face Space and serving the adapter are planned. So far the adapter has only been run
+  as a batch predictor.
 
 ## Data and licensing
 

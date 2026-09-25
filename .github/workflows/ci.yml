@@ -63,6 +63,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Record runner CPU
+        run: |
+          lscpu > lscpu.txt
+          {
+            echo "## Runner CPU"
+            echo
+            echo '```'
+            grep -E '^(Model name|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|Socket\(s\)):' lscpu.txt
+            echo "SIMD flags: $(grep '^Flags:' lscpu.txt | grep -oE '\b(sse4_2|avx|avx2|fma|avx512[a-z0-9_]*|avx_vnni|amx[a-z0-9_]*)\b' | sort -u | tr '\n' ' ')"
+            echo '```'
+            echo
+          } | tee cpu-summary.md >> "$GITHUB_STEP_SUMMARY"
+          cat cpu-summary.md
+
       - name: Build image
         run: docker build --progress=plain -t "$IMAGE" .
 
@@ -70,6 +84,7 @@ jobs:
         run: |
           docker run --name sens "$IMAGE" python src/ticket_router/refit_sensitivity.py --out-dir /tmp/sens
           docker cp sens:/tmp/sens ./sens
+          cp lscpu.txt cpu-summary.md sens/
           cat sens/refit_sensitivity.md >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4

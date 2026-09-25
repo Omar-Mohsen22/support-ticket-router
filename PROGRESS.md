@@ -3298,3 +3298,38 @@ or push and read both CI jobs.
 
 **Next step: Omar's call. Options: log the runner CPU in the sensitivity job to settle the
 Windows-vs-Linux question; deploy the image to the HF Docker Space; or serve the adapter.**
+
+### Correction (step-27 close-out): the sensitivity result varies between runs
+
+The "0 differing test rows" above came from a single run, `35899571019`. A later run,
+`35899886980`, used the same runner label (`ubuntu-24.04`) and the same image recipe, and found
+**81 of 1633** test rows differing. The metric table from that run
+(`refit_sensitivity.json`, downloaded from the run's job artifact):
+
+| metric | published (tfidf-baseline) | Linux refit | delta | test rows whose prediction differs |
+| --- | --- | --- | --- | --- |
+| queue macro-F1 | 0.3683 | 0.3710 | +0.0027 | 35 |
+| priority macro-F1 | 0.5445 | 0.5451 | +0.0006 | 33 |
+| type macro-F1 | 0.8412 | 0.8399 | -0.0013 | 15 |
+| exact match | 29.33% | 29.15% | -0.18 pp | 81 |
+
+The last column counts rows whose prediction for that field differs; for exact match, rows where
+any field differs.
+
+Across the two recorded sensitivity runs:
+- **Differing rows:** 0 and 81 of 1633.
+- **Largest macro-F1 move on any field:** 0.0027.
+- **Adapter-vs-TF-IDF ordering:** unchanged on every field and on exact match. For each of those
+  metrics, the adapter is above or below the refit exactly when it is above or below the
+  published TF-IDF model.
+
+Two runs are not enough to call this an error margin. From this step on, the `refit-sensitivity`
+job records the runner's CPU (`lscpu`: model name, core counts and a SIMD-flag summary) in its
+log, job summary and job artifact, so each future measurement can be matched to the hardware it
+ran on.
+
+Also in this close-out, the README's Limitations section was updated in two places:
+- It gained the refit bullet above, generated from the two runs' recorded
+  `refit_sensitivity.json` files and `results.json`.
+- Its "Serving" bullet was corrected. It still said Docker and CI were planned; both exist now.
+  Deploying to a HF Space and serving the adapter remain planned.
