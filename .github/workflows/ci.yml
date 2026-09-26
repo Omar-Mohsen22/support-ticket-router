@@ -156,3 +156,26 @@ jobs:
         with:
           name: refit-sensitivity
           path: sens/
+
+  # Deploys only a build whose tests and container checks passed, and only from master.
+  deploy:
+    needs: docker
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # huggingface_hub is a deploy-only tool, pinned to the version verified locally; pandas and
+      # pyarrow (same pins as requirements-serve.txt) read the smoke-test ticket from test.parquet.
+      - name: Install deploy tools
+        run: pip install huggingface_hub==1.31.0 $(grep -E '^(pandas|pyarrow|numpy)==' requirements-serve.txt | cut -d' ' -f1)
+
+      - name: Deploy to the Hugging Face Space and smoke-test it
+        env:
+          HF_SPACE_TOKEN: ${{ secrets.HF_SPACE_TOKEN }}
+        run: python deploy/space/deploy_space.py
