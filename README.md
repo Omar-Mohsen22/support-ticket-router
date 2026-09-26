@@ -265,6 +265,26 @@ CI (`.github/workflows/ci.yml`) runs two jobs:
 - **`refit-sensitivity`** refits TF-IDF on Linux and scores it with the same metric code. The
   result goes to the job summary only; nothing published is changed.
 
+**Hosted deployment (private for now).** The API runs on a private Hugging Face Docker Space,
+[`Omar-Mohsen22/support-ticket-router`](https://huggingface.co/spaces/Omar-Mohsen22/support-ticket-router),
+on free `cpu-basic` hardware (`https://omar-mohsen22-support-ticket-router.hf.space`). Requests
+need an `Authorization: Bearer <HF token>` header with read access to the Space. On every push
+to `master` whose `docker` job passes, the `deploy` CI job does the following
+(`deploy/space/deploy_space.py`):
+1. uploads exactly the files the Docker build needs;
+2. waits for the Space to rebuild and reach `RUNNING`;
+3. smoke-tests `/health`, and `/predict` on a real test ticket, whose output must match the
+   published prediction.
+
+Measured in the first deploy (CI run `36261663632`), from a GitHub-hosted runner, so the times
+include the network round trip:
+- first `/health` after the rebuild: 250 ms;
+- first `/predict`: 196 ms;
+- warm `/predict`: median 211 ms over 5 requests;
+- the server's own `latency_ms` for those requests: 3.3-6.8 ms.
+
+A cold start after the Space goes to sleep was not measured.
+
 The API builds its input with the same `build_ticket_text()` that built the training data
 (`src/ticket_router/ticket_text.py`). A parity test in `tests/test_api.py` checks that the API
 reproduces `results/tfidf-baseline.predictions.jsonl` exactly, on all 1,633 test tickets.
@@ -284,10 +304,9 @@ reproduces `results/tfidf-baseline.predictions.jsonl` exactly, on all 1,633 test
   artifact is the exact evaluated model; CI verifies it on all 1633 test rows.
 - **Adapter weights are private for now.** They are hosted in a private Hugging Face repo,
   `Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`, so step 5 of Reproduce needs access to it.
-- **Serving covers TF-IDF only, and is not deployed yet.** There is a FastAPI service for the
-  TF-IDF model, and a Docker image that CI builds and tests (see Serving). Deploying to a
-  Hugging Face Space and serving the adapter are planned. So far the adapter has only been run
-  as a batch predictor.
+- **Serving covers TF-IDF only, on a private Space.** The FastAPI service for the TF-IDF model
+  is deployed to a private Hugging Face Space by CI (see Serving). Serving the adapter is
+  planned. So far the adapter has only been run as a batch predictor.
 
 ## Data and licensing
 

@@ -3333,3 +3333,121 @@ Also in this close-out, the README's Limitations section was updated in two plac
   `refit_sensitivity.json` files and `results.json`.
 - Its "Serving" bullet was corrected. It still said Docker and CI were planned; both exist now.
   Deploying to a HF Space and serving the adapter remain planned.
+
+## step-28: hosted deployment -- a private Hugging Face Docker Space, deployed by CI
+
+### Hosting decision history
+
+Step-28 was redefined several times before landing here.
+
+1. **HF Docker Space, first attempt: dropped.** Omar found in the Space-creation UI that Docker
+   Spaces required a paid plan.
+2. **GitHub Container Registry: cancelled.** It was investigated only; nothing was pushed.
+   - GitHub's Packages billing docs give GitHub Free 500MB storage / 1GB transfer, but also say:
+     "Container image storage and bandwidth for the Container registry is currently free. If you
+     use Container registry, you'll be informed at least one month in advance of any change to
+     this policy."
+   - The account's billing and budget settings could not be read: the API needs the `user`
+     scope, which the `gh` token lacks.
+3. **Render free web service: measured, then dropped.** The fit check (512 MB RAM, `$PORT`) was
+   measured in CI (commit `8b4b804`, run `36108478920`) with `--memory=512m --memory-swap=512m`
+   and `PORT=10000`:
+   - `/health` on port 10000 returned 200, so the CMD's `${PORT:-7860}` works.
+   - Memory at startup was 138.9 MiB (docker stats) and memory.current 146,079,744 bytes. After
+     30 s idle it was 138.6 MiB, and after 200 sequential `/predict` calls (all 200 returned 200)
+     it was 139 MiB. memory.peak was 155,279,360 bytes (148.1 MiB) throughout.
+   - Not OOM-killed; `memory.events` was all zeros.
+   - uvicorn runs 1 worker (the default).
+   - The app pulls in `pandas`, `pyarrow`, `evaluate` and `run_meta` at startup through its
+     import of `tfidf_baseline.py`, none of which serving needs. That was reported, not changed.
+
+   Render then asked for a card at deploy time, so it was not free as advertised.
+4. **Chosen: HF PRO ($9/month, fixed price).** It makes Docker Spaces available, and it also
+   covers the adapter demo on ZeroGPU later. Omar created the Space by hand:
+   `spaces/Omar-Mohsen22/support-ticket-router`, Docker SDK, Blank template, CPU Basic (free
+   hardware), private, cc-by-nc-4.0.
+
+### Pre-checks (HF_SPACE_TOKEN from .env, never printed)
+
+- **Token:** fine-grained, `space Omar-Mohsen22/support-ticket-router` with `repo.access.read`,
+  `repo.content.read`, `repo.write`. The `user Omar-Mohsen22` entry has an empty permission
+  list, and the global scope is empty. The only write permission is on this Space.
+- **Space:** exists, `sdk=docker`, `private=True`, requested hardware `cpu-basic`. The stage was
+  `NO_APP_FILE` (nothing uploaded yet), so current hardware read `None`.
+- **The `HF_SPACE_TOKEN` secret** exists in the GitHub repo. It was checked by name only, with
+  `gh secret list`.
+
+### What was built
+
+- **`deploy/space/README.md`** is the Space's README and the source of truth.
+  - Field names were taken from the official Spaces config reference: `title`, `sdk`,
+    `app_port` (int, default 7860, which matches the Dockerfile's `PORT`) and
+    `short_description`.
+  - `license` is not on that page. Its name was taken from the README HF itself generated at
+    Space creation (`license: cc-by-nc-4.0`), which also held the `emoji`, `colorFrom`, `colorTo`
+    and `pinned` values Omar picked in the UI. Those were kept as they were.
+  - The body is four first-person lines: what is served, that it is the exact evaluated model,
+    the GitHub link (private for now), and the licence note.
+- **`deploy/space/deploy_space.py`** has `--dry-run` to list the files only.
+  - **File list.** It uploads exactly what the Dockerfile build needs: the `COPY` lines filtered
+    by the `.dockerignore` allowlist, tracked files only (`git ls-files`). That is `Dockerfile`,
+    `.dockerignore`, `requirements-serve.txt`, `pytest.ini`, the 3 `data/processed` files, the 2
+    `models/tfidf` files, and all tracked files under `src/`, `tests/` and `results/`: 58 files,
+    plus `deploy/space/README.md` as `README.md`. The script refuses to upload anything matching
+    `.env`, key, `__pycache__` or `.venv` patterns.
+  - **Upload.** It uses `HfApi().upload_folder(repo_type="space", delete_patterns=["*", "**/*"])`.
+    `huggingface_hub` never deletes `.gitattributes`. The commit message contains the GitHub
+    commit sha.
+  - **Waiting for the build.** The Space runtime API reports no commit sha, so after an upload
+    that creates a commit, the script requires a build stage (BUILDING / RUNNING_BUILDING /
+    APP_STARTING / RUNNING_APP_STARTING) to be seen before it accepts RUNNING. Otherwise it could
+    smoke-test the old build. Timeouts: 5 min to see a build stage, 25 min to reach RUNNING
+    (HF's own default startup timeout is 30 min). It fails on BUILD_ERROR, RUNTIME_ERROR,
+    CONFIG_ERROR, STOPPED, PAUSED and DELETING. An upload with no changes creates no commit, and
+    then no rebuild is waited for.
+  - **Smoke test.** It sends an `Authorization: Bearer` header to the `*.hf.space` host. It
+    retries `/health` for up to 2 min while the router warms up, and requires `/health` 200 with
+    `model_loaded` true. It then requires `/predict` on test ticket `tkt_009916` to return 200
+    and match the published tfidf-baseline prediction exactly, and sends 5 more warm `/predict`
+    requests. Every request's latency is logged, and the table goes to the job summary.
+- **The `deploy` job** in `.github/workflows/ci.yml`: `needs: docker`, runs only on push to
+  master, `ubuntu-24.04`, 40-min job timeout. It uses Python 3.12 via `actions/setup-python@v5`.
+  It installs `huggingface_hub==1.31.0`, a CI-only deploy tool pinned to the locally verified
+  version and not added to any requirements file, plus pandas/pyarrow/numpy at the same pins as
+  `requirements-serve.txt` to read the smoke-test ticket. The token comes from
+  `secrets.HF_SPACE_TOKEN` and is never echoed.
+
+### First deploy: CI run 36261663632 (commit 325c643)
+
+- **Jobs:** `docker`, `refit-sensitivity` and `deploy` all succeeded.
+- **Upload** created Space commit `a26917b636ebfdc0db00676dd8dc47bead077cc0`.
+- **Build:** stage BUILDING at 0, 15, 30 and 45 s, then RUNNING at 61 s.
+- **Space URL:** https://omar-mohsen22-support-ticket-router.hf.space (private).
+- **Smoke test.** Client latency was measured from the GitHub runner, so it includes the
+  network round trip:
+  - `GET /health` (first) returned 200 in 250 ms: `{'status': 'ok', 'model':
+    'tfidf-baseline', 'model_loaded': True}`.
+  - `POST /predict` (first, `tkt_009916`) returned 200 in 196 ms: Technical Support / high /
+    Incident, server latency_ms 6.82. It **matches** the published prediction exactly.
+  - The 5 warm `/predict` calls took 222 / 211 / 196 / 232 / 203 ms (median 211 ms), with server
+    latency_ms 3.26-3.65.
+- **The token was never exposed:** the full run log contains 0 `hf_...`-like strings, and the
+  env line shows `HF_SPACE_TOKEN: ***`.
+- **Not measured:** a cold start after the Space goes to sleep.
+
+**README:** the "Serving" section now names the private Space, the deploy flow and the measured
+latencies. The Limitations "Serving" bullet now says the service is deployed to a private
+Space, instead of "not deployed yet".
+
+**Files changed:** `deploy/space/README.md` (new), `deploy/space/deploy_space.py` (new),
+`.github/workflows/ci.yml` (memory measurement step in the `docker` job, `deploy` job),
+`README.md`, `PROGRESS.md`.
+
+**Verify with:**
+```
+python deploy/space/deploy_space.py --dry-run
+```
+or push to master and read the `deploy` job's summary.
+
+**Next step: Omar's call. Options: make the GitHub repo and/or the Space public; serve the
+adapter as a ZeroGPU demo (covered by HF PRO); or trim the unneeded startup imports.**
