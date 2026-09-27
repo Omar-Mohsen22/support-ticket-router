@@ -3,19 +3,25 @@
 Reuses the project's own code, copied into this Space at deploy time by
 deploy/demo/deploy_demo.py:
   - build_ticket_text (ticket_text.py): subject + body -> model input, as in training;
-  - build_system_message (make_sft_dataset.py), render_prompt, generate_batch and
-    parse_and_validate (predictors/adapter_predictor.py): the same system prompt, chat
-    template, left padding, greedy decoding and output validation as the batch predictor;
+  - build_system_message (make_sft_dataset.py), and load_model_and_tokenizer, render_prompt,
+    generate_batch and parse_and_validate (predictors/adapter_predictor.py): the same model
+    loading, system prompt, chat template, left padding, greedy decoding and output
+    validation as the evaluated batch predictor;
   - the committed TF-IDF artifact (models/tfidf/), the exact evaluated model.
 
-One difference from the published run: the base model is loaded unquantized in bfloat16 and
-the adapter is merged (merge_and_unload). The published metrics used a 4-bit NF4 base on a
-T4.
+The adapter runs in the evaluated inference config: 4-bit NF4 with double quant
+(train/config.yaml), the adapter unmerged, and the compute dtype pinned to float16, which
+pick_compute_dtype() chose on the T4 that produced the published predictions. On 400 sampled
+test tickets, run in batches of 8, this config matched the published predictions on 399
+(reports/adapter_zerogpu_4bit.md). 4-bit quantization needs a real GPU, so the model is
+loaded inside each GPU call (ZeroGPU gives none at module level). The weights are downloaded to
+disk at startup, so a GPU call only loads them from disk.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -28,71 +34,75 @@ sys.path.insert(0, str(ROOT / "src"))
 import gradio as gr
 import joblib
 import torch
-from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from huggingface_hub import snapshot_download
 
 from ticket_router.make_sft_dataset import build_system_message
 from ticket_router.predictors.adapter_predictor import (
-    generate_batch, load_config, load_hf_token, load_label_map, parse_and_validate, render_prompt,
+    generate_batch, load_config, load_hf_token, load_label_map, load_model_and_tokenizer,
+    parse_and_validate, render_prompt,
 )
 from ticket_router.predictors.tfidf_baseline import MODEL_PATH, TARGET_FIELDS
 from ticket_router.ticket_text import build_ticket_text
 
-# GPU durations, sized from step-29 measurements on this Space. Time inside the GPU call:
-# one ticket took 0.88-1.09 s over 3 calls, and a batch of 8 took 1.16 s. Decoding
-# dominates, so a batch costs about the same as one ticket. A pathological output that runs to
-# max_new_tokens (64, about 4x the ~15 tokens a normal answer needs) would take roughly 4 s.
-SINGLE_DURATION_S = 10          # ~2.5x that worst case, ~9x the measured time
-BATCH_BASE_S = 10               # same worst-case allowance as a single ticket
-BATCH_PER_TICKET_S = 0.5        # measured marginal cost is ~0.03 s/ticket; 0.5 s leaves a wide margin
-MAX_BATCH = 16                  # upper bound for the hidden measurement endpoint
+# GPU durations, sized from the 4-bit probe on this Space (reports/adapter_zerogpu_4bit.md).
+# Loading the 4-bit model inside a call took 1.6-1.75 s warm and 5.9 s on the first call.
+# One batch of 8 took 0.93-1.5 s to generate. An output that runs to max_new_tokens (64, about
+# 4x a normal ~15-token answer) could take ~6 s. So a single ticket's worst case is ~12 s
+# (cold load plus a runaway output), and a typical one is ~2.7 s.
+SINGLE_DURATION_S = 20          # ~1.7x that worst case, ~7x the typical call
+BATCH_BASE_S = 20               # the same load-plus-runaway allowance
+BATCH_PER_8_S = 3               # per batch of 8: 2-3x the measured 0.93-1.5 s
+EVAL_BATCH = 8                  # the evaluated run's batch size
+MAX_BATCH = 96                  # hidden endpoint: up to 12 batches of 8 per call (<= 56 s)
+COMPUTE_DTYPE = torch.float16   # what pick_compute_dtype() chose on the T4
 ERROR_ANALYSIS_URL = "https://github.com/Omar-Mohsen22/support-ticket-router/blob/master/reports/error_analysis.md"
+FOURBIT_REPORT_URL = "https://github.com/Omar-Mohsen22/support-ticket-router/blob/master/reports/adapter_zerogpu_4bit.md"
 
 CONFIG = load_config()
 SYSTEM_MESSAGE = build_system_message(load_label_map())
 MAX_SEQ_LEN = CONFIG["max_seq_len"]
 MAX_NEW_TOKENS = CONFIG["inference"]["max_new_tokens"]
+HF_TOKEN = load_hf_token()
 
 tfidf = joblib.load(MODEL_PATH)
 
-tokenizer = AutoTokenizer.from_pretrained(CONFIG["base_model"])
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
-tokenizer.padding_side = "left"
-base = AutoModelForCausalLM.from_pretrained(CONFIG["base_model"], dtype=torch.bfloat16)
-# torch_device="cpu": under ZeroGPU's CUDA emulation, peft would otherwise infer "cuda" and have
-# safetensors load the adapter straight onto a GPU that does not exist at module level
-# ("RuntimeError: No CUDA GPUs are available"). Load and merge on the CPU, then move to cuda.
-model = PeftModel.from_pretrained(
-    base, CONFIG["hub_model_id"], token=load_hf_token(), torch_device="cpu",
-).merge_and_unload()
-model.to("cuda")  # at module level, as the ZeroGPU docs require
-model.eval()
+# Download the base model and the private adapter to the disk cache now, without a GPU, so a GPU
+# call never spends its time on a 3 GB download.
+snapshot_download(CONFIG["base_model"])
+snapshot_download(CONFIG["hub_model_id"], token=HF_TOKEN)
 
 EXAMPLES = json.loads((ROOT / "examples.json").read_text(encoding="utf-8"))
 
 
-def _generate(texts: list[str]) -> tuple[list[str], float]:
-    """Returns the decoded completions and the milliseconds spent generating them."""
-    t0 = time.perf_counter()
-    prompts = [render_prompt(t, SYSTEM_MESSAGE, tokenizer) for t in texts]
-    decoded, _, _, _ = generate_batch(model, tokenizer, prompts, MAX_SEQ_LEN, MAX_NEW_TOKENS)
-    return decoded, (time.perf_counter() - t0) * 1000
+def _generate_4bit(texts: list[str]) -> tuple[list[str], float, float]:
+    """Load the evaluated 4-bit config and generate in batches of 8, as the evaluated run did.
+    Returns (decoded, load_ms, total_ms_inside_the_call)."""
+    t_call = time.perf_counter()
+    model, tokenizer = load_model_and_tokenizer(CONFIG, COMPUTE_DTYPE, HF_TOKEN)
+    load_ms = (time.perf_counter() - t_call) * 1000
+    decoded_all = []
+    for i in range(0, len(texts), EVAL_BATCH):
+        prompts = [render_prompt(t, SYSTEM_MESSAGE, tokenizer) for t in texts[i:i + EVAL_BATCH]]
+        decoded, _, _, _ = generate_batch(model, tokenizer, prompts, MAX_SEQ_LEN, MAX_NEW_TOKENS)
+        decoded_all += decoded
+    del model
+    torch.cuda.empty_cache()
+    return decoded_all, load_ms, (time.perf_counter() - t_call) * 1000
 
 
 @spaces.GPU(duration=SINGLE_DURATION_S)
-def adapter_generate_one(text: str) -> tuple[list[str], float]:
-    return _generate([text])
+def adapter_generate_one(text: str) -> tuple[list[str], float, float]:
+    return _generate_4bit([text])
 
 
 def batch_duration(texts: list[str]) -> float:
     # Dynamic duration: the ZeroGPU docs say it takes the same inputs as the decorated function.
-    return BATCH_BASE_S + BATCH_PER_TICKET_S * len(texts)
+    return BATCH_BASE_S + BATCH_PER_8_S * math.ceil(len(texts) / EVAL_BATCH)
 
 
 @spaces.GPU(duration=batch_duration)
-def adapter_generate_batch(texts: list[str]) -> tuple[list[str], float]:
-    return _generate(texts)
+def adapter_generate_batch(texts: list[str]) -> tuple[list[str], float, float]:
+    return _generate_4bit(texts)
 
 
 def tfidf_predict(texts: list[str]) -> list[dict]:
@@ -111,7 +121,7 @@ def classify(subject: str, body: str):
     tfidf_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
-    decoded, gpu_ms = adapter_generate_one(text)
+    decoded, load_ms, gpu_ms = adapter_generate_one(text)
     adapter_ms = (time.perf_counter() - t0) * 1000
     labels, error = parse_and_validate(decoded[0])
 
@@ -121,7 +131,7 @@ def classify(subject: str, body: str):
     ]
     timing = (
         f"TF-IDF (CPU): {tfidf_ms:.1f} ms. Fine-tuned model: {adapter_ms:.0f} ms end to end, "
-        f"GPU time inside the call: {gpu_ms:.0f} ms."
+        f"GPU time inside the call: {gpu_ms:.0f} ms (of which loading the 4-bit model: {load_ms:.0f} ms)."
     )
     if error:
         timing += f"\n\nThe fine-tuned model's output did not validate: `{decoded[0][:200]}` ({error[:200]})"
@@ -136,24 +146,28 @@ def predict_batch(payload: str) -> str:
     if not 1 <= len(tickets) <= MAX_BATCH:
         raise gr.Error(f"Send between 1 and {MAX_BATCH} tickets.")
     texts = [build_ticket_text(t.get("subject"), t["body"]) for t in tickets]
-    decoded, gpu_ms = adapter_generate_batch(texts)
+    decoded, load_ms, gpu_ms = adapter_generate_batch(texts)
     results = []
     for t, raw in zip(tickets, decoded):
         labels, error = parse_and_validate(raw)
         results.append({"id": t["id"], "raw": raw,
                         "labels": labels.model_dump() if labels else None, "error": error})
-    return json.dumps({"gpu_ms": gpu_ms, "results": results})
+    return json.dumps({"gpu_ms": gpu_ms, "load_ms": load_ms, "results": results})
 
 
-INTRO = """# Support ticket router: TF-IDF vs fine-tuned Qwen2.5-1.5B
+INTRO = f"""# Support ticket router: TF-IDF vs fine-tuned Qwen2.5-1.5B
 
 I trained two models to route a customer-support ticket to a **queue**, a **priority** and a
 **type**. Enter a ticket, and both answer side by side:
 - **TF-IDF + logistic regression** runs on the CPU.
-- **Qwen2.5-1.5B-Instruct with my LoRA adapter** runs on a shared GPU.
+- **Qwen2.5-1.5B-Instruct with my 4-bit NF4 LoRA adapter** runs on a shared GPU.
 
-The adapter runs on an unquantized bf16 base here. The published numbers used a 4-bit base on a
-T4, so a few predictions can differ from the published ones.
+The adapter runs with the same inference config as the evaluated run: 4-bit NF4 base, adapter
+not merged, float16 compute, greedy decoding. Run in batches of 8, that config matched the
+published predictions on **399 of 400** sampled test tickets
+([report]({FOURBIT_REPORT_URL}); the repository is private for now). This page sends one ticket
+at a time, so there is no batch padding, which can occasionally change an output.
+The model is loaded on every request, so an answer takes a few seconds.
 """
 
 NOTE = f"""**About the test labels.** They are noisy. In my [error analysis]({ERROR_ANALYSIS_URL})

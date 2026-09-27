@@ -3510,3 +3510,81 @@ Decoding dominates, so the batch size barely matters. The worst case is an outpu
 - **`predict_batch`:** a dynamic duration of `10 + 0.5 x n_tickets` s, so 14 s for the batch of 8
   used in the measurement and 18 s at the `MAX_BATCH` of 16. The measured marginal cost is about
   0.03 s per ticket.
+
+These bf16-era durations were replaced when the demo switched to 4-bit; see below.
+
+### Finding: the demo's bf16 setup did not reproduce the published adapter; the evaluated 4-bit config did
+
+- **bf16, all 1,633 test tickets** (`reports/adapter_zerogpu_agreement.md`, commit `b57daee`).
+  The first demo setup used a bf16 unquantized base, the adapter merged, and batch 16. It agreed
+  with the published predictions on only **1,186 / 1,633 = 72.63%** of tickets on all three
+  fields (queue 84.94%, priority 83.83%, type 96.39%). Its macro-F1 was lower on every field:
+  queue 0.3849 vs 0.3999, priority 0.4696 vs 0.4944, type 0.8391 vs 0.8559. On type, that is
+  below TF-IDF's 0.8412.
+- **4-bit, first 400 tickets of the same seed=29 order** (`reports/adapter_zerogpu_4bit.md`,
+  commit `deea718`). This run used the published config: 4-bit NF4 with double quant, the
+  adapter unmerged, float16 compute pinned, batch 8, through the same
+  `load_model_and_tokenizer()`. It agreed with the published predictions on **399 / 400** on all
+  three fields (queue 100%, priority 99.75%, type 100%). On the same 400 tickets, bf16 agreed on
+  291 / 400 (72.75%).
+- **Hardware ruled out.** The 4-bit run on ZeroGPU (Blackwell) reproduced the T4 run almost
+  exactly, so the hardware is not what caused the bf16 gap.
+- **Cause not isolated.** The bf16 gap comes from one or more of: precision (bf16 unquantized vs
+  4-bit NF4), merged vs unmerged adapter, and batch 16 vs 8. Which of these matters was not
+  isolated further.
+- **Where the 4-bit endpoint came from.** It lived only on the local branch
+  `probe/4bit-zerogpu` (commit `629c12c`) and was deployed by hand from a separate worktree. The
+  Space was then redeployed from master (Space commit `f29f6ad`) and verified: `app.py` and
+  `requirements.txt` byte-identical to master, and only the `/classify` and `/predict_batch`
+  endpoints.
+- **Is bitsandbytes on ZeroGPU officially supported?** There is no official statement. The
+  ZeroGPU docs do not mention it, and the one relevant thread is a user report in
+  `zero-gpu-explorers` (discussion #71). The `bitsandbytes==0.50.2` wheel ships
+  `libbitsandbytes_cuda130.so` with `sm_120` (Blackwell) and `sm_75` (T4) kernels. The probe
+  proved that loading works inside `@spaces.GPU`: 5.9 s for the first load, ~1.7 s after that.
+
+### Decision: the demo now serves the evaluated 4-bit config
+
+`deploy/demo/app.py` on master now loads the adapter with `load_model_and_tokenizer()`: 4-bit
+NF4 with double quant, adapter unmerged, and `torch.float16` compute pinned. This replaces the
+bf16 merged path.
+- **The model is loaded inside every GPU call.** This is required: 4-bit quantization needs a
+  real GPU, and ZeroGPU gives none at module level.
+- **Weights are pre-downloaded.** `snapshot_download` at startup puts the base model and the
+  private adapter in the disk cache, so no GPU call pays for a 3 GB download.
+- **Batches of 8** inside every call, as in the evaluated run.
+- **Requirements:** `bitsandbytes==0.50.2` and `accelerate==1.14.0` were added to the demo's
+  requirements, the same versions the Colab environment used.
+
+**Durations** are sized from the probe's measured latencies. Loading took 1.6-1.75 s warm and
+5.9 s cold; a batch of 8 took 0.93-1.5 s; an output running to 64 tokens is ~6 s at worst.
+- Single-ticket UI call: **20 s**. That is ~1.7x the worst case (cold load plus a runaway
+  output, ~12 s) and ~7x a typical call (~2.7 s).
+- `predict_batch`: **`20 + 3 x ceil(n / 8)` s**, with `MAX_BATCH` raised to 96 (12 batches of 8,
+  at most 56 s per call). Bigger calls spread the per-call load over more tickets.
+
+**UI caveat, stated on the page.** The page sends one ticket at a time, so a UI request has no
+batch padding. The 399/400 match was measured in batches of 8, and padding can occasionally
+change an output.
+
+### TODOs
+
+- **Blocker before the demo Space is made public:** remove or disable `predict_batch` (see above).
+- **Full 1,633-ticket 4-bit agreement run, on a fresh daily quota.** Only 400 tickets were run
+  today, to stay inside the 10-GPU-minute cap. For the full run, point
+  `deploy/demo/measure_4bit.py` at master's `/predict_batch` (it now serves 4-bit in batches of
+  8, up to 96 tickets per call) and set `N_TICKETS` to 1,633. As written, the script targets
+  the branch-only `/predict_batch_4bit`.
+
+### GPU ledger for today (conservative: each call's full wall time)
+
+| item | seconds |
+| --- | --- |
+| up to the batch-of-8 duration verification (table above, plus 2.1 s + 2.7 s) | 21.5 |
+| bf16 agreement run, 1,633 tickets, 103 calls | 127.7 |
+| smoke test of the branch (4-bit probe) deploy | 2.3 |
+| 4-bit calls: probe plus 400 tickets, 6 calls | 75.0 |
+| smoke test of the redeploy back to master | 2.9 |
+| **total before the 4-bit switch is pushed** | **229.3 (3.82 min)** |
+
+The smoke test of the push that ships the 4-bit switch is added in the step's closing summary.
