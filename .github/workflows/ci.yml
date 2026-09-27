@@ -179,3 +179,24 @@ jobs:
         env:
           HF_SPACE_TOKEN: ${{ secrets.HF_SPACE_TOKEN }}
         run: python deploy/space/deploy_space.py
+
+  # Deploys the ZeroGPU demo Space. Its smoke test uses one GPU call from the owner's quota.
+  deploy-demo:
+    needs: docker
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deploy tools
+        run: pip install -r requirements-dev.txt $(grep -E '^(pandas|pyarrow|numpy)==' requirements-serve.txt | cut -d' ' -f1)
+
+      - name: Deploy the demo Space and smoke-test it
+        env:
+          HF_SPACE_TOKEN: ${{ secrets.HF_SPACE_TOKEN }}
+        run: python deploy/demo/deploy_demo.py

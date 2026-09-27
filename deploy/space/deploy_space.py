@@ -101,11 +101,11 @@ def commit_sha() -> str:
     ).stdout.strip()
 
 
-def wait_for_running(api, created_commit: bool) -> str:
+def wait_for_running(api, created_commit: bool, space_id: str = SPACE_ID) -> str:
     start = time.monotonic()
     seen_build = not created_commit
     while True:
-        stage = str(api.get_space_runtime(SPACE_ID).stage)
+        stage = str(api.get_space_runtime(space_id).stage)
         elapsed = time.monotonic() - start
         print(f"  [{elapsed:6.0f}s] stage={stage}", flush=True)
         if stage in ERROR_STAGES:
