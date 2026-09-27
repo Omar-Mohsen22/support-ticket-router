@@ -56,7 +56,12 @@ if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 tokenizer.padding_side = "left"
 base = AutoModelForCausalLM.from_pretrained(CONFIG["base_model"], dtype=torch.bfloat16)
-model = PeftModel.from_pretrained(base, CONFIG["hub_model_id"], token=load_hf_token()).merge_and_unload()
+# torch_device="cpu": under ZeroGPU's CUDA emulation, peft would otherwise infer "cuda" and have
+# safetensors load the adapter straight onto a GPU that does not exist at module level
+# ("RuntimeError: No CUDA GPUs are available"). Load and merge on the CPU, then move to cuda.
+model = PeftModel.from_pretrained(
+    base, CONFIG["hub_model_id"], token=load_hf_token(), torch_device="cpu",
+).merge_and_unload()
 model.to("cuda")  # at module level, as the ZeroGPU docs require
 model.eval()
 
