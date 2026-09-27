@@ -13,3 +13,6 @@ pyarrow==25.0.1
 pydantic==2.12.5  # not the repo's 2.13.5: gradio[mcp]==6.28.0, which the Space installs, requires pydantic<=2.12.5
 python-dotenv==1.2.3
 pyyaml==6.0.3
+# TEMPORARY (branch probe/4bit-zerogpu): same versions as the Colab environment that produced the published predictions
+bitsandbytes==0.50.2
+accelerate==1.14.0

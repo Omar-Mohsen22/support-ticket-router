@@ -16,6 +16,7 @@ T4.
 from __future__ import annotations
 
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -33,7 +34,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from ticket_router.make_sft_dataset import build_system_message
 from ticket_router.predictors.adapter_predictor import (
-    generate_batch, load_config, load_hf_token, load_label_map, parse_and_validate, render_prompt,
+    generate_batch, load_config, load_hf_token, load_label_map, load_model_and_tokenizer,
+    parse_and_validate, render_prompt,
 )
 from ticket_router.predictors.tfidf_baseline import MODEL_PATH, TARGET_FIELDS
 from ticket_router.ticket_text import build_ticket_text
@@ -70,6 +72,52 @@ model.to("cuda")  # at module level, as the ZeroGPU docs require
 model.eval()
 
 EXAMPLES = json.loads((ROOT / "examples.json").read_text(encoding="utf-8"))
+
+
+# --- TEMPORARY (branch probe/4bit-zerogpu only, never on master) -----------------------------
+# Reproduces the published adapter config: load_model_and_tokenizer() from adapter_predictor.py
+# as-is (4-bit NF4 + double quant from train/config.yaml, adapter NOT merged, left padding),
+# with the compute dtype pinned to float16, which pick_compute_dtype() chose on the T4
+# (compute capability 7.5). 4-bit quantization needs a real GPU, so the model is loaded INSIDE
+# the GPU call, and every call pays that load.
+FOURBIT_BATCH = 8
+FOURBIT_MAX_TICKETS = 96
+HF_TOKEN = load_hf_token()
+
+
+def duration_4bit(texts: list[str]) -> float:
+    return 60 + 4 * math.ceil(len(texts) / FOURBIT_BATCH)
+
+
+@spaces.GPU(duration=duration_4bit)
+def adapter_generate_4bit(texts: list[str]):
+    t_call = time.perf_counter()
+    model4, tok4 = load_model_and_tokenizer(CONFIG, torch.float16, HF_TOKEN)
+    load_ms = (time.perf_counter() - t_call) * 1000
+    decoded_all, batch_ms = [], []
+    for i in range(0, len(texts), FOURBIT_BATCH):
+        prompts = [render_prompt(t, SYSTEM_MESSAGE, tok4) for t in texts[i:i + FOURBIT_BATCH]]
+        decoded, _, _, ms = generate_batch(model4, tok4, prompts, MAX_SEQ_LEN, MAX_NEW_TOKENS)
+        decoded_all += decoded
+        batch_ms.append(ms)
+    del model4
+    torch.cuda.empty_cache()
+    return decoded_all, load_ms, batch_ms, (time.perf_counter() - t_call) * 1000
+
+
+def predict_batch_4bit(payload: str) -> str:
+    tickets = json.loads(payload)
+    if not 1 <= len(tickets) <= FOURBIT_MAX_TICKETS:
+        raise gr.Error(f"Send between 1 and {FOURBIT_MAX_TICKETS} tickets.")
+    texts = [build_ticket_text(t.get("subject"), t["body"]) for t in tickets]
+    decoded, load_ms, batch_ms, gpu_ms = adapter_generate_4bit(texts)
+    results = []
+    for t, raw in zip(tickets, decoded):
+        labels, error = parse_and_validate(raw)
+        results.append({"id": t["id"], "raw": raw,
+                        "labels": labels.model_dump() if labels else None, "error": error})
+    return json.dumps({"load_ms": load_ms, "batch_ms": batch_ms, "gpu_ms": gpu_ms, "results": results})
+# --- end TEMPORARY -------------------------------------------------------------------------
 
 
 def _generate(texts: list[str]) -> tuple[list[str], float]:
@@ -194,5 +242,10 @@ with gr.Blocks() as demo:
         batch_out = gr.Textbox()
         batch_run = gr.Button()
     batch_run.click(predict_batch, inputs=batch_in, outputs=batch_out, api_name="predict_batch")
+    with gr.Row(visible=False):
+        batch4_in = gr.Textbox()
+        batch4_out = gr.Textbox()
+        batch4_run = gr.Button()
+    batch4_run.click(predict_batch_4bit, inputs=batch4_in, outputs=batch4_out, api_name="predict_batch_4bit")
 
 demo.queue().launch()
