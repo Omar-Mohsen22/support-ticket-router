@@ -38,10 +38,14 @@ from ticket_router.predictors.adapter_predictor import (
 from ticket_router.predictors.tfidf_baseline import MODEL_PATH, TARGET_FIELDS
 from ticket_router.ticket_text import build_ticket_text
 
-# Seconds of GPU time one call may hold. Start at the ZeroGPU default of 60 and lower it after
-# measuring real per-call time (step 29).
-GPU_DURATION_S = 60
-MAX_BATCH = 16  # upper bound for the hidden measurement endpoint
+# GPU durations, sized from step-29 measurements on this Space. Time inside the GPU call:
+# one ticket took 0.88-1.09 s over 3 calls, and a batch of 8 took 1.16 s. Decoding
+# dominates, so a batch costs about the same as one ticket. A pathological output that runs to
+# max_new_tokens (64, about 4x the ~15 tokens a normal answer needs) would take roughly 4 s.
+SINGLE_DURATION_S = 10          # ~2.5x that worst case, ~9x the measured time
+BATCH_BASE_S = 10               # same worst-case allowance as a single ticket
+BATCH_PER_TICKET_S = 0.5        # measured marginal cost is ~0.03 s/ticket; 0.5 s leaves a wide margin
+MAX_BATCH = 16                  # upper bound for the hidden measurement endpoint
 ERROR_ANALYSIS_URL = "https://github.com/Omar-Mohsen22/support-ticket-router/blob/master/reports/error_analysis.md"
 
 CONFIG = load_config()
@@ -68,13 +72,27 @@ model.eval()
 EXAMPLES = json.loads((ROOT / "examples.json").read_text(encoding="utf-8"))
 
 
-@spaces.GPU(duration=GPU_DURATION_S)
-def adapter_generate(texts: list[str]) -> tuple[list[str], float]:
-    """Returns the decoded completions and the milliseconds spent inside this GPU call."""
+def _generate(texts: list[str]) -> tuple[list[str], float]:
+    """Returns the decoded completions and the milliseconds spent generating them."""
     t0 = time.perf_counter()
     prompts = [render_prompt(t, SYSTEM_MESSAGE, tokenizer) for t in texts]
     decoded, _, _, _ = generate_batch(model, tokenizer, prompts, MAX_SEQ_LEN, MAX_NEW_TOKENS)
     return decoded, (time.perf_counter() - t0) * 1000
+
+
+@spaces.GPU(duration=SINGLE_DURATION_S)
+def adapter_generate_one(text: str) -> tuple[list[str], float]:
+    return _generate([text])
+
+
+def batch_duration(texts: list[str]) -> float:
+    # Dynamic duration: the ZeroGPU docs say it takes the same inputs as the decorated function.
+    return BATCH_BASE_S + BATCH_PER_TICKET_S * len(texts)
+
+
+@spaces.GPU(duration=batch_duration)
+def adapter_generate_batch(texts: list[str]) -> tuple[list[str], float]:
+    return _generate(texts)
 
 
 def tfidf_predict(texts: list[str]) -> list[dict]:
@@ -93,7 +111,7 @@ def classify(subject: str, body: str):
     tfidf_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
-    decoded, gpu_ms = adapter_generate([text])
+    decoded, gpu_ms = adapter_generate_one(text)
     adapter_ms = (time.perf_counter() - t0) * 1000
     labels, error = parse_and_validate(decoded[0])
 
@@ -118,7 +136,7 @@ def predict_batch(payload: str) -> str:
     if not 1 <= len(tickets) <= MAX_BATCH:
         raise gr.Error(f"Send between 1 and {MAX_BATCH} tickets.")
     texts = [build_ticket_text(t.get("subject"), t["body"]) for t in tickets]
-    decoded, gpu_ms = adapter_generate(texts)
+    decoded, gpu_ms = adapter_generate_batch(texts)
     results = []
     for t, raw in zip(tickets, decoded):
         labels, error = parse_and_validate(raw)

@@ -3451,3 +3451,62 @@ or push to master and read the `deploy` job's summary.
 
 **Next step: Omar's call. Options: make the GitHub repo and/or the Space public; serve the
 adapter as a ZeroGPU demo (covered by HF PRO); or trim the unneeded startup imports.**
+
+## step-29 (in progress): ZeroGPU demo -- TF-IDF vs the fine-tuned adapter, side by side
+
+This entry is being written checkpoint by checkpoint. The final summary (agreement numbers,
+README) is appended when the step closes.
+
+### TODO -- blocker before the demo Space is ever made public
+
+`predict_batch` is a hidden endpoint, added only for the step-29 agreement measurement. It sits
+in a `gr.Row(visible=False)`, so it is not in the UI, but it is still callable, and it appears on
+the Space's "Use via API" page. **It must be removed or disabled before the demo Space goes
+public**, so outside visitors cannot use it to drain GPU quota.
+
+### Dependency note: pydantic differs between the repo and the demo Space
+
+The repo pins `pydantic==2.13.5` (`requirements-serve.txt`). The demo Space pins
+`pydantic==2.12.5` (`deploy/demo/requirements.txt`). HF installs `gradio[oauth,mcp]==6.28.0` for
+a Gradio Space with `sdk_version: 6.28.0`, and its `mcp` extra requires
+`pydantic<=2.12.5,>=2.11.10`. With the repo's 2.13.5, the Space build failed with
+`ResolutionImpossible`.
+
+With 2.12.5, every declared constraint was checked against PyPI metadata before pushing:
+- gradio 6.28.0: `pydantic<=3.0,>=2.0`, plus the `mcp` extra's bound above;
+- spaces 0.51.3: `pydantic<3,>=1`;
+- mcp 1.30.0: `pydantic<3.0.0,>=2.11.0`.
+
+The project code the Space runs (`TicketLabels`, `model_dump`) uses only pydantic 2 APIs that
+both versions have.
+
+### GPU ledger (cap: 10 GPU-minutes, all within the free 40-min PRO daily quota; $2 credits untouched)
+
+| call | GPU inside `@spaces.GPU` | server end to end |
+| --- | --- | --- |
+| CI smoke test, run 36301053541, `tkt_014741` | 1,090 ms | 2,571 ms |
+| duration probe: single `tkt_000466` | 881 ms | 5,980 ms |
+| duration probe: single `tkt_011979` | 960 ms | 2,913 ms |
+| duration probe: batch of 8 (`predict_batch`) | 1,161 ms | 5,270 ms (client wall) |
+| **total so far** | **4.1 s** | **16.7 s** (the conservative count used against the cap) |
+
+The deploy attempts that failed (a build error and a module-level runtime error) never reached a
+GPU call, so they used no quota.
+
+### Duration sizing (per endpoint)
+
+The ZeroGPU docs say `duration` sets the maximum runtime of the decorated function: "This sets
+the maximum function runtime to 120 seconds." The docs connect it to queue priority: "Specifying
+shorter durations for quicker functions will improve queue priority for Space visitors." They
+also support a dynamic duration: "pass a callable that takes the same inputs as your decorated
+function and returns a duration value".
+
+Measured: a single ticket took 0.88-1.09 s inside the GPU call, and a batch of 8 took 1.16 s.
+Decoding dominates, so the batch size barely matters. The worst case is an output running to
+`max_new_tokens` = 64, about 4x a normal ~15-token answer, so roughly 4 s.
+
+- **Single-ticket UI call:** `duration=10` s, about 2.5x that worst case and about 9x the
+  measured time.
+- **`predict_batch`:** a dynamic duration of `10 + 0.5 x n_tickets` s, so 14 s for the batch of 8
+  used in the measurement and 18 s at the `MAX_BATCH` of 16. The measured marginal cost is about
+  0.03 s per ticket.
