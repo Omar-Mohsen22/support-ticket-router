@@ -3587,4 +3587,46 @@ change an output.
 | smoke test of the redeploy back to master | 2.9 |
 | **total before the 4-bit switch is pushed** | **229.3 (3.82 min)** |
 
-The smoke test of the push that ships the 4-bit switch is added in the step's closing summary.
+The smoke test of the push that shipped the 4-bit switch (CI run `36327595748`) added 4.8 s
+(client wall 4,788 ms), for **234.1 s (3.90 min)** in total.
+
+### Full 1,633-ticket 4-bit agreement run (2026-09-28)
+
+This run closes the earlier TODO (the full run, on the next day's quota).
+- **What was run:** `deploy/demo/measure_4bit.py` (commit `0ebf84f`, `--run full`), against
+  the deployed **master** demo's `/predict_batch` (commit `85feb19`). It covered all 1,633 test
+  tickets in the seed=29 order, in 18 calls (16, then 16 x 96, then 81), in batches of 8.
+- **The budget was checked first.** Omar raised the day's cap to 20 conservative minutes, inside
+  the free 40-minute daily quota. Before any GPU call, the run was estimated at 4.52 min from the
+  6 calls measured the day before (7.45 min pessimistic), for a day total of 8.42 min (11.35
+  pessimistic). The gate at 208 tickets projected 8.42 min.
+- **Result** (`reports/adapter_zerogpu_4bit_full.md`): the run agreed with the published
+  predictions on **1,623 / 1,633 = 99.39%** of tickets on all three fields (queue 99.88%,
+  priority 99.63%, type 99.88%). Exactly 10 tickets have a different valid label.
+- **Macro-F1, published vs 4-bit ZeroGPU:** queue 0.3999 vs 0.4004, priority 0.4944 vs 0.4918,
+  type 0.8559 vs 0.8562. The earlier bf16 run scored 0.3849 / 0.4696 / 0.8391, and TF-IDF
+  0.3683 / 0.5445 / 0.8412.
+- **Invalid outputs:** 1 / 1,633. It is the same ticket as the published run's single invalid
+  output (`tkt_003783`, where the model puts "Incident" in the queue field).
+- **Conclusion.** On the full test split, the deployed demo reproduces the evaluated model to
+  within 10 tickets, and its macro-F1 is within 0.003 of the published numbers on every field.
+  This also confirms the 400-ticket finding: the hardware does not explain the bf16 gap.
+- **GPU:** the run's calls took 266.7 s conservative, so the day's total is **500.8 s
+  (8.35 min)**. Margin: 699.2 s to the 20-minute cap, 1,899.2 s to the 40-minute free quota.
+
+### TODO -- redesign the demo UI after step-29 closes
+
+The options are to be reviewed visually before anything is implemented.
+
+Part of the redesign: show **gpt-4o-mini (zero-shot)** as a third column.
+- It uses the stored evaluation predictions, and only for the example tickets. There are no
+  live API calls and no OpenAI key on the Space.
+- For free-text input, the column shows "available for examples only".
+- The UI carries this note: "gpt-4o-mini predictions are the stored outputs from my evaluation
+  run, shown for the examples only. I don't call it live here: a public page would need my API
+  key on the server, and every visitor's request would be billed to my account."
+- **Checked (2026-09-28):** `results/api-gpt4o-mini-full-test.predictions.jsonl` is committed.
+  It has 1,633 rows, `n_gold` is 1,633 and `invalid_rate` is 0.0 in `results.json`, and the run
+  is not superseded. It covers all 6 current example ticket ids (`tkt_014741`, `tkt_021899`,
+  `tkt_015123`, `tkt_011979`, `tkt_023949`, `tkt_024807`), each with a valid queue, priority and
+  type and no error.
