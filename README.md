@@ -289,6 +289,37 @@ The API builds its input with the same `build_ticket_text()` that built the trai
 (`src/ticket_router/ticket_text.py`). A parity test in `tests/test_api.py` checks that the API
 reproduces `results/tfidf-baseline.predictions.jsonl` exactly, on all 1,633 test tickets.
 
+## Demo
+
+I run a side-by-side demo on a Hugging Face ZeroGPU Space,
+[`Omar-Mohsen22/support-ticket-router-demo`](https://huggingface.co/spaces/Omar-Mohsen22/support-ticket-router-demo)
+(private for now).
+- **TF-IDF** runs on the CPU.
+- **My QLoRA adapter** runs on a shared GPU, with the same inference config as the evaluated
+  run: 4-bit NF4 base, adapter not merged, float16 compute, greedy decoding. It is loaded through
+  the same `load_model_and_tokenizer()` as `src/ticket_router/predictors/adapter_predictor.py`.
+
+**It reproduces the evaluated model's predictions.** I ran all 1,633 test tickets through the deployed demo,
+in batches of 8 as in the evaluated run:
+- It matched the published adapter predictions on **1,623 / 1,633 (99.39%)** on all three
+  fields.
+- Its macro-F1 is within 0.003 of the published numbers on every field.
+- Its one invalid output is the same ticket as in the published run (`tkt_003783`).
+
+Full numbers: [`reports/adapter_zerogpu_4bit_full.md`](reports/adapter_zerogpu_4bit_full.md).
+The headline tables above stay the published evaluation.
+
+**An earlier setup did not reproduce it.** My first demo loaded the base unquantized in
+bfloat16, merged the adapter and ran batches of 16. It agreed with the published predictions on
+only 72.6% of tickets and scored lower on every field
+([`reports/adapter_zerogpu_agreement.md`](reports/adapter_zerogpu_agreement.md)). The hardware
+is not the cause: the evaluated 4-bit config on ZeroGPU (Blackwell) matched the T4 run. So the
+gap comes from precision, merging, batch size, or a mix of these; I did not isolate which.
+
+**Latency.** 4-bit quantization needs a real GPU, and ZeroGPU only attaches one inside a request.
+So the model is loaded on every request (about 1.7-2.4 s), and an answer takes a few seconds.
+The page sends one ticket at a time, so there is no batch padding; a single-ticket answer can occasionally differ from the batched results above.
+
 ## Limitations
 
 - **English only.** 16,338 of the 28,587 rows in the source file are English, and only those
@@ -304,9 +335,8 @@ reproduces `results/tfidf-baseline.predictions.jsonl` exactly, on all 1,633 test
   artifact is the exact evaluated model; CI verifies it on all 1633 test rows.
 - **Adapter weights are private for now.** They are hosted in a private Hugging Face repo,
   `Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`, so step 5 of Reproduce needs access to it.
-- **Serving covers TF-IDF only, on a private Space.** The FastAPI service for the TF-IDF model
-  is deployed to a private Hugging Face Space by CI (see Serving). Serving the adapter is
-  planned. So far the adapter has only been run as a batch predictor.
+- **Serving is private for now.** CI deploys the TF-IDF API to a private Hugging Face Space (see
+  Serving). The adapter is served only in the private ZeroGPU demo (see Demo), not as an API.
 
 ## Data and licensing
 

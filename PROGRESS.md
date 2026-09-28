@@ -3452,7 +3452,7 @@ or push to master and read the `deploy` job's summary.
 **Next step: Omar's call. Options: make the GitHub repo and/or the Space public; serve the
 adapter as a ZeroGPU demo (covered by HF PRO); or trim the unneeded startup imports.**
 
-## step-29 (in progress): ZeroGPU demo -- TF-IDF vs the fine-tuned adapter, side by side
+## step-29: ZeroGPU demo -- TF-IDF vs the fine-tuned adapter, side by side
 
 This entry is being written checkpoint by checkpoint. The final summary (agreement numbers,
 README) is appended when the step closes.
@@ -3630,3 +3630,82 @@ Part of the redesign: show **gpt-4o-mini (zero-shot)** as a third column.
   is not superseded. It covers all 6 current example ticket ids (`tkt_014741`, `tkt_021899`,
   `tkt_015123`, `tkt_011979`, `tkt_023949`, `tkt_024807`), each with a valid queue, priority and
   type and no error.
+
+### Go-public checklist (all must be done before the demo Space is made public)
+
+- [ ] Remove or disable the hidden `predict_batch` endpoint in `deploy/demo/app.py`, so visitors
+  cannot use it to drain GPU quota. See the blocker TODO at the top of this entry.
+- [ ] The README's "Demo" section links to the demo Space, which is private for now. Recheck the
+  link, and the "(private for now)" wording, once the Space is public.
+
+### Step-29 closing summary
+
+**What was built.** A private Hugging Face ZeroGPU Space,
+`Omar-Mohsen22/support-ticket-router-demo`, shows TF-IDF (CPU) and the fine-tuned Qwen2.5-1.5B
+adapter (GPU) side by side on a ticket.
+- **Examples:** 6 test tickets, with their gold labels shown. Three are agreement cases, and
+  three are the label-noise cases from `reports/error_analysis.md`.
+- **Error-analysis note:** the page links the error analysis and says the test labels are noisy.
+- **Model:** the adapter runs the evaluated inference config, 4-bit NF4 with double quant,
+  unmerged, with float16 compute. It is loaded inside every `@spaces.GPU` call, because 4-bit
+  quantization needs a real GPU. The weights are pre-downloaded at startup.
+- **Reused code:** the demo reuses the project's own modules (`build_ticket_text`,
+  `build_system_message`, `load_model_and_tokenizer`, `render_prompt`, `generate_batch`,
+  `parse_and_validate`) and the committed TF-IDF artifact. They are copied into the Space at
+  deploy time, not rewritten.
+
+**Deploy.**
+- The `deploy-demo` CI job runs on pushes to master, after the `docker` job passes. It assembles
+  the bundle (17 files plus a generated `examples.json`), uploads it with `delete_patterns`, waits
+  for a build stage and then RUNNING, and smoke-tests `/classify` through `gradio_client` with a
+  masked token.
+- The Space secret `HF_TOKEN` (read-only on the adapter repo) was set once, with
+  `deploy_demo.py --set-secret`.
+
+**Results.**
+- **Evaluated 4-bit config, full test split:** the demo matched the published adapter predictions
+  on **1,623 / 1,633 (99.39%)**, with macro-F1 within 0.003 on every field. Its one invalid output
+  is the same ticket as in the published run (`reports/adapter_zerogpu_4bit_full.md`).
+- **First bf16 setup:** bf16 base, adapter merged, batch 16. It matched only 72.63% and scored
+  lower on every field (`reports/adapter_zerogpu_agreement.md`).
+- **Hardware ruled out:** 4-bit on Blackwell matched the T4. The bf16 gap comes from precision,
+  merging and/or batch size, and was not isolated further (`reports/adapter_zerogpu_4bit.md`,
+  400-ticket run).
+- **Headline tables unchanged.** The README's headline tables remain the published evaluation.
+  The new "Demo" section reports the agreement numbers separately.
+
+**Durations** (sized from measured 4-bit latencies): single ticket 20 s; `predict_batch`
+`20 + 3 x ceil(n / 8)` s, with at most 96 tickets per call.
+
+**GPU:**
+- 2026-09-27: 234.1 s conservative, against a 10-minute cap.
+- 2026-09-28: 500.8 s conservative through the full run (this counts the previous day's
+  234.1 s too, to be safe), against a 20-minute cap.
+- The $2 credits were never touched; every call stayed inside the free PRO daily quota.
+- The smoke test of the push that closes this step is reported with the push, not in this entry.
+
+**Temporary branch.** The 4-bit probe endpoint lived only on branch `probe/4bit-zerogpu`
+(commit `629c12c`, pushed so the report's reference stays reachable). Its worktree was removed
+with `git worktree remove`, and the branch was kept.
+
+**Files added or changed in step-29:**
+- New: `deploy/demo/` (`app.py`, `requirements.txt`, `README.md`, `deploy_demo.py`,
+  `measure_agreement.py`, `measure_4bit.py`) and `requirements-dev.txt`.
+- Changed: `.github/workflows/ci.yml` (the `deploy-demo` job) and `deploy/space/deploy_space.py`
+  (a `space_id` parameter).
+- New reports: `reports/adapter_zerogpu_agreement.*`, `reports/adapter_zerogpu_4bit.*` and
+  `reports/adapter_zerogpu_4bit_full.*`.
+- Changed: `README.md` (the "Demo" section, and the Limitations "Serving" bullet) and
+  `PROGRESS.md`.
+
+**Verify with:**
+```
+python deploy/demo/deploy_demo.py --dry-run
+python deploy/demo/measure_4bit.py --report
+python deploy/demo/measure_4bit.py --run probe400 --report
+python deploy/demo/measure_agreement.py --report
+```
+or push to master and read the `deploy-demo` job's summary.
+
+**Next step:** the UI redesign (TODO above; the options are reviewed visually first), or the
+go-public checklist. Omar's call.
