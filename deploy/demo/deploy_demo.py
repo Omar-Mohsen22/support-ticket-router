@@ -45,7 +45,7 @@ from deploy_space import commit_sha, get_token, wait_for_running  # noqa: E402
 
 SPACE_ID = "Omar-Mohsen22/support-ticket-router-demo"
 DEMO_DIR = REPO_ROOT / "deploy" / "demo"
-DEMO_FILES = {"app.py": "app.py", "requirements.txt": "requirements.txt", "README.md": "README.md"}
+DEMO_FILES = {"app.py": "app.py", "ui.py": "ui.py", "requirements.txt": "requirements.txt", "README.md": "README.md"}
 SRC_MODULES = [
     "src/ticket_router/__init__.py",
     "src/ticket_router/ticket_text.py",
@@ -80,14 +80,20 @@ def build_examples() -> list[dict]:
 
     test = pd.read_parquet(REPO_ROOT / "data" / "processed" / "test.parquet")
     tfidf, adapter = load_predictions("tfidf-baseline"), load_predictions("qlora-adapter-ckpt1500")
+    # Step 30: the stored zero-shot gpt-4o-mini predictions, copied into examples.json for the
+    # example tickets only (the full predictions file is not bundled into the Space).
+    gpt = load_predictions("api-gpt4o-mini-full-test")
 
-    def entry(row, why: str) -> dict:
+    def entry(row, why: str, noisy: bool = False) -> dict:
         return {
             "id": row.id,
             "subject": row.subject if isinstance(row.subject, str) else None,
             "body": row.body,
             "gold": " / ".join(getattr(row, f) for f in FIELDS),
             "why": why,
+            "gold_labels": {f: getattr(row, f) for f in FIELDS},
+            "noisy": noisy,
+            "gpt4o_mini": {f: gpt[row.id][f] for f in FIELDS},
         }
 
     agreement, queues = [], set()
@@ -104,7 +110,8 @@ def build_examples() -> list[dict]:
         r = by_id.loc[tid]
         row = type("Row", (), {"id": tid, "subject": r["subject"], "body": r["body"],
                                **{f: r[f] for f in FIELDS}})
-        noise.append(entry(row, "label-noise case from the error analysis: the text contradicts the gold label"))
+        noise.append(entry(row, "label-noise case from the error analysis: the text contradicts the gold label",
+                           noisy=True))
     return agreement + noise
 
 

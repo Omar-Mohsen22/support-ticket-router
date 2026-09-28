@@ -43,6 +43,7 @@ from ticket_router.predictors.adapter_predictor import (
 )
 from ticket_router.predictors.tfidf_baseline import MODEL_PATH, TARGET_FIELDS
 from ticket_router.ticket_text import build_ticket_text
+from ui import build_demo, launch_kwargs
 
 # GPU durations, sized from the 4-bit probe on this Space (reports/adapter_zerogpu_4bit.md).
 # Loading the 4-bit model inside a call took 1.6-1.75 s warm and 5.9 s on the first call.
@@ -55,8 +56,6 @@ BATCH_PER_8_S = 3               # per batch of 8: 2-3x the measured 0.93-1.5 s
 EVAL_BATCH = 8                  # the evaluated run's batch size
 MAX_BATCH = 96                  # hidden endpoint: up to 12 batches of 8 per call (<= 56 s)
 COMPUTE_DTYPE = torch.float16   # what pick_compute_dtype() chose on the T4
-ERROR_ANALYSIS_URL = "https://github.com/Omar-Mohsen22/support-ticket-router/blob/master/reports/error_analysis.md"
-FOURBIT_REPORT_URL = "https://github.com/Omar-Mohsen22/support-ticket-router/blob/master/reports/adapter_zerogpu_4bit.md"
 
 CONFIG = load_config()
 SYSTEM_MESSAGE = build_system_message(load_label_map())
@@ -155,58 +154,20 @@ def predict_batch(payload: str) -> str:
     return json.dumps({"gpu_ms": gpu_ms, "load_ms": load_ms, "results": results})
 
 
-INTRO = f"""# Support ticket router: TF-IDF vs fine-tuned Qwen2.5-1.5B
-
-I trained two models to route a customer-support ticket to a **queue**, a **priority** and a
-**type**. Enter a ticket, and both answer side by side:
-- **TF-IDF + logistic regression** runs on the CPU.
-- **Qwen2.5-1.5B-Instruct with my 4-bit NF4 LoRA adapter** runs on a shared GPU.
-
-The adapter runs with the same inference config as the evaluated run: 4-bit NF4 base, adapter
-not merged, float16 compute, greedy decoding. Run in batches of 8, that config matched the
-published predictions on **399 of 400** sampled test tickets
-([report]({FOURBIT_REPORT_URL}); the repository is private for now). This page sends one ticket
-at a time, so there is no batch padding, which can occasionally change an output.
-The model is loaded on every request, so an answer takes a few seconds.
-"""
-
-NOTE = f"""**About the test labels.** They are noisy. In my [error analysis]({ERROR_ANALYSIS_URL})
-(the repository is private for now), the two models, which are unrelated, often make the same
-"mistake", and several sampled tickets have text that contradicts their gold label. Some of the
-examples below are such cases. Compare the gold labels with the ticket text yourself.
-"""
+# --- UI (step 30): layout, CSS and card rendering live in ui.py; inference above is unchanged.
+def ui_tfidf(text: str) -> tuple[dict, float]:
+    t0 = time.perf_counter()
+    labels = tfidf_predict([text])[0]
+    return labels, (time.perf_counter() - t0) * 1000
 
 
-def examples_table() -> str:
-    lines = ["| ticket | gold queue / priority / type | why it is here |", "| --- | --- | --- |"]
-    for e in EXAMPLES:
-        lines.append(f"| `{e['id']}` | {e['gold']} | {e['why']} |")
-    return "\n".join(lines)
+def ui_adapter(text: str) -> tuple[dict | None, str, str | None, float]:
+    t0 = time.perf_counter()
+    decoded, _load_ms, _gpu_ms = adapter_generate_one(text)
+    labels, error = parse_and_validate(decoded[0])
+    return (labels.model_dump() if labels else None), decoded[0], error, (time.perf_counter() - t0) * 1000
 
 
-with gr.Blocks() as demo:
-    gr.Markdown(INTRO)
-    with gr.Row():
-        with gr.Column():
-            subject = gr.Textbox(label="Subject (optional)")
-            body = gr.Textbox(label="Body", lines=8)
-            gold = gr.Textbox(label="Gold labels from the test set (filled in by the examples)",
-                              interactive=False)
-            run = gr.Button("Classify", variant="primary")
-        with gr.Column():
-            table = gr.Dataframe(headers=["field", "TF-IDF", "fine-tuned Qwen2.5-1.5B"],
-                                 interactive=False)
-            timing = gr.Markdown()
-    gr.Examples(examples=[[e["subject"] or "", e["body"], e["gold"]] for e in EXAMPLES],
-                inputs=[subject, body, gold])
-    gr.Markdown(NOTE)
-    gr.Markdown(examples_table())
-    run.click(classify, inputs=[subject, body], outputs=[table, timing], api_name="classify")
-
-    with gr.Row(visible=False):
-        batch_in = gr.Textbox()
-        batch_out = gr.Textbox()
-        batch_run = gr.Button()
-    batch_run.click(predict_batch, inputs=batch_in, outputs=batch_out, api_name="predict_batch")
-
-demo.queue().launch()
+demo = build_demo(examples=EXAMPLES, tfidf_fn=ui_tfidf, adapter_fn=ui_adapter,
+                  classify_fn=classify, predict_batch_fn=predict_batch)
+demo.queue().launch(**launch_kwargs(EXAMPLES))

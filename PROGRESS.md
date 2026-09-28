@@ -3637,6 +3637,10 @@ Part of the redesign: show **gpt-4o-mini (zero-shot)** as a third column.
   cannot use it to drain GPU quota. See the blocker TODO at the top of this entry.
 - [ ] The README's "Demo" section links to the demo Space, which is private for now. Recheck the
   link, and the "(private for now)" wording, once the Space is public.
+- [ ] Step 30: the demo page links to the GitHub repo in its header (Results, Error analysis,
+  Code) and in its notes (error analysis, agreement report). While the repo is private, those
+  links 404 for everyone else. Make the repo public too, or change the links, before the Space
+  goes public.
 
 ### Step-29 closing summary
 
@@ -3709,3 +3713,68 @@ or push to master and read the `deploy-demo` job's summary.
 
 **Next step:** the UI redesign (TODO above; the options are reviewed visually first), or the
 go-public checklist. Omar's call.
+
+## step-30: demo UI redesign (approved design: Option A, Eta AI colors)
+
+**What changed.** The UI only. No inference code, config or prediction changed.
+
+**New `deploy/demo/ui.py`** holds the layout, CSS and card rendering. It imports no torch, so the
+same UI runs on the Space and locally.
+- **Fonts and colors:** IBM Plex Sans and Mono. Orange `#F4521A` for the Classify pill (19px
+  bold, white text) and "one ticket" in the H1. Purple `#6D28D9` for the fine-tuned card, its
+  badge, the ✓ marks and links. Small orange text is `#c2410c` on `#fff1eb`.
+- **Header:** "SUPPORT TICKET ROUTER", "Three models, one ticket", the subtitle, and links to
+  Results, Error analysis and Code.
+- **Left column:** the input card and "Try a test ticket". The 6 examples are full-width buttons
+  showing the ticket id, or a "noisy label" pill for the three label-noise cases. The selected
+  example gets a purple border.
+- **Right column:**
+  - A dark gold-label strip, shown for examples only.
+  - Three equal-height cards in one CSS grid, with the label above each value:
+    - **TF-IDF:** badge `CPU · <ms>`.
+    - **Fine-tuned Qwen2.5-1.5B:** badge `ZeroGPU · 4-bit · <s>`. It shows "Running on
+      ZeroGPU…" until the adapter returns; the events are chained with `.success()`.
+    - **gpt-4o-mini:** badge `zero-shot · stored result`. For free text it shows "Available
+      for examples only.".
+  - A ✓ or ✗ against the gold label, for examples only.
+- **Notes:** the noisy-label note stays visible. The gpt-4o-mini note and the
+  inference-config / 1,623-of-1,633 note sit in a collapsed "About this demo", with the same text
+  as before.
+- **Layout:** the page is centered (max-width 1240px), and the columns and cards stack on narrow
+  screens.
+- **Light theme pinned:** the page forces Gradio's light theme with `?__theme=light`.
+
+**gpt-4o-mini.** The stored zero-shot labels come from
+`results/api-gpt4o-mini-full-test.predictions.jsonl`. `deploy_demo.py` copies them into
+`examples.json` for the 6 example tickets only; the full file is not bundled, no API is called,
+and the Space has no OpenAI key.
+
+**API unchanged.**
+- The visible UI's events use `api_visibility="private"` and `show_progress="hidden"`, so they
+  add no endpoints and Gradio's overlay does not cover the loading card.
+- `/classify` (subject, body -> table, timing) and `/predict_batch` (payload) keep the same
+  names, inputs and response shapes, on hidden components wired to app.py's unchanged
+  `classify()` and `predict_batch()`. This was checked with `view_api` on the local preview.
+- `app.py` changed only in its UI section, which now calls `build_demo()`.
+
+**Local preview.**
+- `deploy/demo/preview_ui.py` runs the UI with the real TF-IDF and a stub adapter (fixed labels
+  after 3 s). It needs `gradio==6.28.0`, which the project venv does not have.
+- For step 30 it ran from a venv under `.scratch/step30/`, a new gitignored folder for scratch
+  work (`.gitignore`: `.scratch/`). The screenshots were taken there with Playwright over two
+  review rounds: an example selected, a noisy-label example, free text, the loading state, and a
+  390px mobile width.
+- Nothing under `.scratch/` is committed.
+
+**Go-public checklist:** a new item (above). The page's GitHub links 404 for everyone else while
+the repo is private.
+
+**Files changed:** `deploy/demo/ui.py` (new), `deploy/demo/preview_ui.py` (new),
+`deploy/demo/app.py` (UI section only), `deploy/demo/deploy_demo.py` (bundles `ui.py`; the
+examples gain `gold_labels`, `noisy` and `gpt4o_mini`), `.gitignore`, `PROGRESS.md`.
+
+**Verify with:** `python deploy/demo/deploy_demo.py --dry-run` (18 files plus examples.json).
+Run `python deploy/demo/preview_ui.py` from an environment that has gradio 6.28.0, or push to
+master and read the `deploy-demo` job's summary.
+
+**Next step:** Omar's call. Options: the go-public checklist, or other demo work.

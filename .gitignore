@@ -66,3 +66,6 @@ models/tfidf/*
 
 # Temporary Colab transfer bundle (eval outputs downloaded from Colab) -- never part of the repo.
 eval-bundle.zip
+
+# step-30: local scratch work (UI preview screenshots, helper scripts) -- never committed.
+.scratch/
