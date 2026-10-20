@@ -3641,6 +3641,10 @@ Part of the redesign: show **gpt-4o-mini (zero-shot)** as a third column.
   Code) and in its notes (error analysis, agreement report). While the repo is private, those
   links 404 for everyone else. Make the repo public too, or change the links, before the Space
   goes public.
+- [ ] API Space (`Omar-Mohsen22/support-ticket-router`): "/" currently returns
+  `{"detail":"Not Found"}`. Make "/" redirect to `/docs`.
+- [ ] After making the demo public, check that it loads in a Chrome incognito window with the
+  default third-party-cookie settings.
 
 ### Step-29 closing summary
 
@@ -3778,3 +3782,55 @@ Run `python deploy/demo/preview_ui.py` from an environment that has gradio 6.28.
 master and read the `deploy-demo` job's summary.
 
 **Next step:** Omar's call. Options: the go-public checklist, or other demo work.
+
+### step-30 follow-up: live styling fix and three custom tickets
+
+**Finding: the Space renders server-side, so our CSS lost there.**
+- The live page looked different from the local preview:
+  - the ✓/✗ marks, the fine-tuned badge text and the kicker were dark grey;
+  - the nav links were blue and underlined;
+  - the TF-IDF card had no border.
+- The matched CSS rules (Chrome DevTools Protocol, no GPU call) showed the cause:
+  - Hugging Face Spaces run Gradio in SSR mode. There, `demo.css` is a plain `<style>` in
+    `<head>`, before Gradio's stylesheets, and is not rewritten into the higher-specificity copy
+    the client-rendered page adds.
+  - Two rules in Gradio's `_app/immutable/assets/0.*.css` then win:
+    - `.gradio-container-6-28-0 .prose *` sets `color: var(--body-text-color)`;
+    - `.gradio-container-6-28-0 .prose a` sets the link color and underline;
+  - and the preflight reset `.gradio-container-6-28-0 *` sets `border-width: 0`.
+
+**Fix.**
+- The whole UI sits in `gr.Column(elem_id="tr-root")`, and every rule of ours is scoped
+  `#tr-root ...`. The ID outranks those class selectors.
+- `!important` is gone inside the UI. It stays only on Gradio's own `.gradio-container`, on the
+  footer, and on the mobile `width`/`min-width` that must beat Gradio's inline `min-width`.
+- Gradio's orange theme accent variables are mapped to purple inside `#tr-root`.
+- **Checked:** computed styles of 111 elements were compared with the approved
+  (client-rendered) design, for a test example, a noisy example, a custom ticket and a 390px
+  width. There were 0 differing values, in both SSR and non-SSR mode.
+
+**Local preview matches the Space.**
+- `python deploy/demo/preview_ui.py --ssr` renders server-side, as the Space does. It serves the
+  same hashed Gradio stylesheets.
+- It needs Node.js 20+, via `GRADIO_NODE_PATH` (Node v22.12.0 was used, from
+  `.scratch/step30/node`, not part of the repo), and `PYTHONIOENCODING=utf-8` on Windows.
+
+**Custom tickets.**
+- Three tickets Omar wrote (`custom-1` to `custom-3` in `deploy_demo.py`) follow the 6 test
+  tickets.
+- Each shows a neutral "custom" pill, with no gold strip and no ✓/✗.
+- TF-IDF and the adapter run live. The gpt-4o-mini card says "Stored results exist for
+  test-set tickets only." No API is called.
+- A line under the list says they are not in the dataset and have no gold label.
+
+**Go-public checklist:** two new items (above): the API Space "/" redirect, and an incognito
+check with default third-party-cookie settings.
+
+**Files changed:** `deploy/demo/ui.py`, `deploy/demo/preview_ui.py`, `deploy/demo/deploy_demo.py`,
+`PROGRESS.md`.
+
+**Verify with:** `python -m pytest -q` (26 passed); `python deploy/demo/deploy_demo.py --dry-run`
+(9 examples); `python deploy/demo/preview_ui.py --ssr` from an environment with gradio 6.28.0 and
+Node.js.
+
+**Next step:** Omar's call.

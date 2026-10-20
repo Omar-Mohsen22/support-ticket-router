@@ -8,10 +8,18 @@ deploy_demo.py builds.
 This needs gradio==6.28.0, which the project venv does not have (only the Space does). Run it
 from a separate environment with gradio plus the requirements-serve.txt pins. From the repo root:
     python deploy/demo/preview_ui.py            (serves on http://127.0.0.1:7861)
+    python deploy/demo/preview_ui.py --ssr      (server-side rendering, as on the Space)
+
+--ssr renders the page the way Hugging Face Spaces do (Gradio's SSR mode is on by default
+there). In that mode, demo.css is served as a plain <style> in <head>, before Gradio's own
+stylesheets, and is not rewritten into the higher-specificity copy that the client-rendered
+page adds. Without --ssr, local styling can look right while the Space's does not. SSR needs
+Node.js 20+; point GRADIO_NODE_PATH at node(.exe) if it is not on PATH.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -56,6 +64,10 @@ def predict_batch_stub(payload: str) -> str:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--ssr", action="store_true", help="server-side rendering, as on the Space")
+    args = parser.parse_args()
     demo = build_demo(examples=examples, tfidf_fn=tfidf_fn, adapter_fn=adapter_stub,
                       classify_fn=classify_stub, predict_batch_fn=predict_batch_stub)
-    demo.queue().launch(server_name="127.0.0.1", server_port=7861, **launch_kwargs(examples))
+    demo.queue().launch(server_name="127.0.0.1", server_port=7861, ssr_mode=args.ssr,
+                        **launch_kwargs(examples))

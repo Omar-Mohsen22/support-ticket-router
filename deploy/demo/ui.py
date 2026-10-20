@@ -48,98 +48,110 @@ BASE_CSS = """
   --orange: #F4521A; --orange-text: #c2410c; --orange-tint: #fff1eb;
   --purple: #6D28D9; --purple-tint: #faf8ff; --purple-line: #e7e0f7;
 }
+/* Our rules are scoped under #tr-root (the Column that holds the whole UI); only the .gradio-container
+   and footer rules below target Gradio's own elements. On the Space, Gradio
+   server-side renders the page and puts this CSS in <head> before its own stylesheets, unprefixed, so
+   unscoped rules lose to Gradio's ".gradio-container-6-28-0 .prose *" and its preflight reset. The ID
+   outranks those class selectors without !important. The remaining !important flags beat Gradio's
+   own container rules and the inline min-width Gradio writes on a Column with min_width. The accent variables map Gradio's orange theme
+   accent (used by some focus and progress states) to our purple inside the UI. */
+#tr-root { color: var(--ink); --color-accent: var(--purple); --border-color-accent: var(--purple-line);
+  --border-color-accent-subdued: var(--purple-line); --color-accent-soft: var(--purple-tint); }
 .gradio-container { background: #ffffff !important; color: var(--ink);
   font-family: "IBM Plex Sans", system-ui, sans-serif !important; max-width: 1240px !important;
   margin-left: auto !important; margin-right: auto !important; }
-.nw { white-space: nowrap; }
+#tr-root .nw { white-space: nowrap; }
 .gradio-container * { font-family: inherit; }
-.mono, .mono * { font-family: "IBM Plex Mono", ui-monospace, monospace !important; }
+#tr-root .mono, #tr-root .mono * { font-family: "IBM Plex Mono", ui-monospace, monospace; }
 footer { display: none !important; }
 
 /* header */
-.hdr { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;
+#tr-root .hdr { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;
   flex-wrap: wrap; padding: 8px 0 4px; }
-.hdr .kicker { font-family: "IBM Plex Mono", monospace; font-size: 12px; font-weight: 600;
+#tr-root .hdr .kicker { font-family: "IBM Plex Mono", monospace; font-size: 12px; font-weight: 600;
   letter-spacing: .12em; color: var(--purple); }
-.hdr h1 { font-size: 34px; line-height: 1.15; margin: 6px 0 6px; color: var(--ink); font-weight: 700; }
-.hdr h1 .hl { color: var(--orange); }
-.hdr .sub { color: var(--muted); font-size: 16px; margin: 0; }
-.hdr nav a { color: var(--purple); font-weight: 600; text-decoration: none; margin-left: 18px; font-size: 15px; }
-.hdr nav a:hover { text-decoration: underline; }
+#tr-root .hdr h1 { font-size: 34px; line-height: 1.15; margin: 6px 0 6px; color: var(--ink); font-weight: 700; }
+#tr-root .hdr h1 .hl { color: var(--orange); }
+#tr-root .hdr .sub { color: var(--muted); font-size: 16px; margin: 0; }
+#tr-root .hdr nav a { color: var(--purple); font-weight: 600; text-decoration: none; margin-left: 18px; font-size: 15px; }
+#tr-root .hdr nav a:hover { text-decoration: underline; }
 
 /* left column */
-.input-card { background: var(--purple-tint) !important; border: 1px solid var(--purple-line) !important;
-  border-radius: 16px !important; padding: 16px !important; }
-.input-card textarea, .input-card input { background: #ffffff !important; color: var(--ink) !important; }
-#classify-btn { background: var(--orange) !important; color: #ffffff !important; border: none !important;
-  border-radius: 999px !important; font-size: 19px !important; font-weight: 700 !important;
-  padding: 12px 20px !important; }
-#classify-btn:hover { filter: brightness(0.95); }
-.left-col { gap: 10px !important; }
-.try-wrap { padding: 0 !important; margin: 0 !important; min-height: 0 !important; }
-.try-title { font-weight: 600; color: var(--ink); margin: 6px 0 0; font-size: 15px; }
-.ex-btn { display: flex !important; justify-content: space-between !important; align-items: center !important;
-  gap: 12px; width: 100% !important; text-align: left !important; background: #ffffff !important;
-  color: var(--ink) !important; border: 1px solid var(--line) !important; border-radius: 12px !important;
-  padding: 10px 14px !important; font-weight: 500 !important; font-size: 14px !important;
-  box-shadow: none !important; min-height: 0 !important; }
-.ex-btn:hover { border-color: var(--purple-line) !important; background: var(--purple-tint) !important; }
-.ex-btn::after { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted);
+#tr-root .input-card { background: var(--purple-tint); border: 1px solid var(--purple-line);
+  border-radius: 16px; padding: 16px; }
+#tr-root .input-card textarea, #tr-root .input-card input { background: #ffffff; color: var(--ink); }
+#tr-root #classify-btn { background: var(--orange); color: #ffffff; border: none;
+  border-radius: 999px; font-size: 19px; font-weight: 700;
+  padding: 12px 20px; }
+#tr-root #classify-btn:hover { filter: brightness(0.95); }
+#tr-root .left-col { gap: 10px; }
+#tr-root .try-wrap { padding: 0; margin: 0; min-height: 0; }
+#tr-root .try-title { font-weight: 600; color: var(--ink); margin: 6px 0 0; font-size: 15px; }
+#tr-root .ex-btn { display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; width: 100%; text-align: left; background: #ffffff;
+  color: var(--ink); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 14px; font-weight: 500; font-size: 14px;
+  box-shadow: none; min-height: 0; }
+#tr-root .ex-btn:hover { border-color: var(--purple-line); background: var(--purple-tint); }
+#tr-root .ex-btn::after { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted);
   white-space: nowrap; flex-shrink: 0; }
-.ex-btn.ex-noisy::after { content: "noisy label"; color: var(--orange-text); background: var(--orange-tint);
+#tr-root .ex-btn.ex-noisy::after { content: "noisy label"; color: var(--orange-text); background: var(--orange-tint);
   border-radius: 999px; padding: 2px 8px; font-weight: 600; }
-.ex-btn.ex-selected { border: 2px solid var(--purple) !important; padding: 9px 13px !important; }
-.examples-col { gap: 6px !important; }
+#tr-root .ex-btn.ex-custom::after { content: "custom"; color: var(--muted); background: #f5f5f4;
+  border-radius: 999px; padding: 2px 8px; font-weight: 600; }
+#tr-root .custom-note { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 2px 2px 0; }
+#tr-root .ex-btn.ex-selected { border: 2px solid var(--purple); padding: 9px 13px; }
+#tr-root .examples-col { gap: 6px; }
 
 /* right column */
-.gold { background: #1c1b19; color: #ffffff; border-radius: 12px; padding: 12px 16px; display: flex;
+#tr-root .gold { background: #1c1b19; color: #ffffff; border-radius: 12px; padding: 12px 16px; display: flex;
   flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 15px; }
-.gold, .gold * { color: #ffffff !important; }
-.gold .gold-label { font-family: "IBM Plex Mono", monospace; color: #fdba9c; font-weight: 600;
-  letter-spacing: .1em; font-size: 12px; color: #fdba9c !important; }
-.gold .gold-id { font-family: "IBM Plex Mono", monospace; color: #d6d3d1 !important; font-size: 12px; margin-left: auto; }
-.gold b { font-weight: 600; }
-.cards-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;
+#tr-root .gold, #tr-root .gold * { color: #ffffff; }
+#tr-root .gold .gold-label { font-family: "IBM Plex Mono", monospace; color: #fdba9c; font-weight: 600;
+  letter-spacing: .1em; font-size: 12px; color: #fdba9c; }
+#tr-root .gold .gold-id { font-family: "IBM Plex Mono", monospace; color: #d6d3d1; font-size: 12px; margin-left: auto; }
+#tr-root .gold b { font-weight: 600; }
+#tr-root .cards-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;
   align-items: stretch; }
-.card { border: 1px solid var(--line); border-radius: 16px; padding: 16px; background: #ffffff;
+#tr-root .card { border: 1px solid var(--line); border-radius: 16px; padding: 16px; background: #ffffff;
   height: 100%; box-sizing: border-box; }
-.card.card-ft { border: 2px solid var(--purple); background: var(--purple-tint); }
-.card.card-gpt { border: 1.5px dashed #a8a29e; }
-.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
-.card-title { font-weight: 700; font-size: 15.5px; color: var(--ink); }
-.badge { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; font-weight: 600; border-radius: 999px;
+#tr-root .card.card-ft { border: 2px solid var(--purple); background: var(--purple-tint); }
+#tr-root .card.card-gpt { border: 1.5px dashed #a8a29e; }
+#tr-root .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+#tr-root .card-title { font-weight: 700; font-size: 15.5px; color: var(--ink); }
+#tr-root .badge { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; font-weight: 600; border-radius: 999px;
   padding: 3px 9px; white-space: nowrap; }
-.badge-cpu { background: #f5f5f4; color: var(--muted); }
-.badge-ft { background: var(--purple); color: #ffffff; }
-.badge-gpt { background: #f5f5f4; color: var(--muted); }
-.card-sub { color: var(--muted); font-size: 13px; margin: 4px 0 12px; }
-.field { display: block; padding: 8px 0; border-top: 1px solid var(--line); }
-.card.card-ft .field { border-top-color: var(--purple-line); }
-.field .k { display: block; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--muted);
+#tr-root .badge-cpu { background: #f5f5f4; color: var(--muted); }
+#tr-root .badge-ft { background: var(--purple); color: #ffffff; }
+#tr-root .badge-gpt { background: #f5f5f4; color: var(--muted); }
+#tr-root .card-sub { color: var(--muted); font-size: 13px; margin: 4px 0 12px; }
+#tr-root .field { display: block; padding: 8px 0; border-top: 1px solid var(--line); }
+#tr-root .card.card-ft .field { border-top-color: var(--purple-line); }
+#tr-root .field .k { display: block; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--muted);
   margin-bottom: 2px; }
-.field .v { display: block; font-weight: 600; text-align: left; font-size: 14.5px; color: var(--ink); }
-.mark-ok { color: var(--purple); font-weight: 700; margin-left: 6px; }
-.mark-bad { color: var(--orange-text); font-weight: 700; margin-left: 6px; }
-.card-empty { color: var(--muted); font-size: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
-.card-loading { color: var(--purple); font-weight: 600; font-size: 14.5px; padding-top: 16px;
+#tr-root .field .v { display: block; font-weight: 600; text-align: left; font-size: 14.5px; color: var(--ink); }
+#tr-root .mark-ok { color: var(--purple); font-weight: 700; margin-left: 6px; }
+#tr-root .mark-bad { color: var(--orange-text); font-weight: 700; margin-left: 6px; }
+#tr-root .card-empty { color: var(--muted); font-size: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+#tr-root .card-loading { color: var(--purple); font-weight: 600; font-size: 14.5px; padding-top: 16px;
   border-top: 1px solid var(--purple-line); display: flex; align-items: center; gap: 10px; }
-.spinner { width: 16px; height: 16px; border: 2.5px solid var(--purple-line); border-top-color: var(--purple);
+#tr-root .spinner { width: 16px; height: 16px; border: 2.5px solid var(--purple-line); border-top-color: var(--purple);
   border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.invalid { color: var(--orange-text); font-size: 13px; margin-top: 8px; }
-.notes { color: var(--muted); font-size: 13px; line-height: 1.5; margin-top: 4px; }
-.notes p { margin: 0 0 8px; }
-.notes details { margin-top: 2px; }
-.notes summary { cursor: pointer; color: var(--ink); font-weight: 600; margin-bottom: 6px; }
-.notes a { color: var(--purple) !important; margin: 0 !important; padding: 0 !important; display: inline !important; }
+#tr-root .invalid { color: var(--orange-text); font-size: 13px; margin-top: 8px; }
+#tr-root .notes { color: var(--muted); font-size: 13px; line-height: 1.5; margin-top: 4px; }
+#tr-root .notes p { margin: 0 0 8px; }
+#tr-root .notes details { margin-top: 2px; }
+#tr-root .notes summary { cursor: pointer; color: var(--ink); font-weight: 600; margin-bottom: 6px; }
+#tr-root .notes a { color: var(--purple); margin: 0; padding: 0; display: inline; }
 
 /* narrow screens: the two columns stack */
 @media (max-width: 900px) {
-  .main-row { flex-direction: column !important; }
-  .main-row > .left-col, .main-row > .right-col { width: 100% !important; min-width: 0 !important; }
-  .hdr nav a { margin: 0 16px 0 0; }
-  .hdr h1 { font-size: 28px; }
-  .cards-grid { grid-template-columns: 1fr; }
+  #tr-root .main-row { flex-direction: column; }
+  #tr-root .main-row > .left-col, #tr-root .main-row > .right-col { width: 100% !important; min-width: 0 !important; }
+  #tr-root .hdr nav a { margin: 0 16px 0 0; }
+  #tr-root .hdr h1 { font-size: 28px; }
+  #tr-root .cards-grid { grid-template-columns: 1fr; }
 }
 """
 
@@ -148,7 +160,8 @@ def example_css(examples: list[dict]) -> str:
     """Per-example ::after content: the ticket id in mono, or the "noisy label" pill (set by the
     .ex-noisy class above)."""
     return "\n".join(
-        f'#ex-{e["id"]}::after {{ content: "{e["id"]}"; }}' for e in examples if not e.get("noisy")
+        f'#tr-root #ex-{e["id"]}::after {{ content: "{e["id"]}"; }}' for e in examples
+        if not e.get("noisy") and not e.get("custom")
     )
 
 
@@ -168,7 +181,7 @@ def header_html() -> str:
 
 
 def gold_html(example: dict | None) -> str:
-    if not example:
+    if not example or not example.get("gold_labels"):
         return ""
     g = example["gold_labels"]
     return (f'<div class="gold"><span class="gold-label">GOLD LABEL</span>'
@@ -187,6 +200,8 @@ def card_html(kind: str, title: str, sub: str, badge: str, *, labels: dict | Non
         body = '<div class="card-loading"><span class="spinner"></span>Running on ZeroGPU…</div>'
     elif state == "na":
         body = '<div class="card-empty">Available for examples only.</div>'
+    elif state == "custom":
+        body = '<div class="card-empty">Stored results exist for test-set tickets only.</div>'
     elif state == "empty" or labels is None:
         body = '<div class="card-empty">Classify a ticket to see its prediction.</div>'
     else:
@@ -247,7 +262,7 @@ def build_demo(*, examples: list[dict],
         return None
 
     def button_updates(selected_idx):
-        return [gr.Button(elem_classes=["ex-btn"] + (["ex-noisy"] if e.get("noisy") else [])
+        return [gr.Button(elem_classes=["ex-btn"] + (["ex-noisy"] if e.get("noisy") else []) + (["ex-custom"] if e.get("custom") else [])
                           + (["ex-selected"] if i == selected_idx else []))
                 for i, e in enumerate(examples)]
 
@@ -261,16 +276,18 @@ def build_demo(*, examples: list[dict],
         e = matched_example(subject, body, idx)
         text = build_ticket_text(subject, body)
         tf_labels, tf_ms = tfidf_fn(text)
-        gold = e["gold_labels"] if e else None
+        gold = e["gold_labels"] if e and e.get("gold_labels") else None
         tf = card_html("tfidf", TFIDF_TITLE, TFIDF_SUB, f"CPU · {tf_ms:.0f} ms", labels=tf_labels, gold=gold)
         ft = card_html("ft", FT_TITLE, FT_SUB, "ZeroGPU · 4-bit", state="loading")
-        if e:
+        if e and e.get("gpt4o_mini"):
             gpt = card_html("gpt", GPT_TITLE, GPT_SUB, "zero-shot · stored result",
                             labels=e["gpt4o_mini"], gold=gold)
+        elif e and e.get("custom"):
+            gpt = card_html("gpt", GPT_TITLE, GPT_SUB, "zero-shot · stored result", state="custom")
         else:
             gpt = card_html("gpt", GPT_TITLE, GPT_SUB, "zero-shot · stored result", state="na")
         sel = examples.index(e) if e else None
-        return [gr.HTML(gold_html(e), visible=e is not None), cards_html(tf, ft, gpt), tf, gpt, sel,
+        return [gr.HTML(gold_html(e), visible=bool(gold_html(e))), cards_html(tf, ft, gpt), tf, gpt, sel,
                 *button_updates(sel)]
 
     def run_slow(subject, body, idx, tf, gpt):
@@ -279,10 +296,10 @@ def build_demo(*, examples: list[dict],
         labels, raw, error, ms = adapter_fn(text)
         note = f"The output did not validate: {raw[:120]}" if error else ""
         ft = card_html("ft", FT_TITLE, FT_SUB, f"ZeroGPU · 4-bit · {ms / 1000:.1f} s", labels=labels,
-                       gold=e["gold_labels"] if e else None, note=note)
+                       gold=e["gold_labels"] if e and e.get("gold_labels") else None, note=note)
         return cards_html(tf, ft, gpt)
 
-    with gr.Blocks(title="Support ticket router") as demo:
+    with gr.Blocks(title="Support ticket router") as demo, gr.Column(elem_id="tr-root"):
         selected = gr.State(None)
         tf_state = gr.State("")
         gpt_state = gr.State("")
@@ -296,8 +313,11 @@ def build_demo(*, examples: list[dict],
                 gr.HTML('<div class="try-title">Try a test ticket</div>', elem_classes=["try-wrap"], min_height=0)
                 with gr.Column(elem_classes=["examples-col"]):
                     buttons = [gr.Button(_button_label(e), elem_id=f"ex-{e['id']}",
-                                         elem_classes=["ex-btn"] + (["ex-noisy"] if e.get("noisy") else []))
+                                         elem_classes=["ex-btn"] + (["ex-noisy"] if e.get("noisy") else []) + (["ex-custom"] if e.get("custom") else []))
                                for e in examples]
+                if any(e.get("custom") for e in examples):
+                    gr.HTML('<div class="custom-note">The last three tickets are ones I wrote; they are not in '
+                            'the dataset and have no gold label.</div>', elem_classes=["try-wrap"], min_height=0)
             with gr.Column(scale=1, min_width=320, elem_classes=["right-col"]):
                 gold = gr.HTML("", visible=False)
                 cards = gr.HTML(cards_html(

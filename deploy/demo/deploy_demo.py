@@ -68,6 +68,19 @@ FIELDS = ["queue", "priority", "type"]
 # From reports/error_analysis.md's samples: ticket text that contradicts the gold label.
 LABEL_NOISE_IDS = ["tkt_011979", "tkt_023949", "tkt_024807"]
 N_AGREEMENT = 3
+# Step 30: three tickets Omar wrote. They are not in the dataset, have no gold label and no stored
+# gpt-4o-mini result. They are listed after the test tickets, and TF-IDF and the adapter run live.
+CUSTOM_TICKETS = [
+    ("custom-1", "Charged twice for annual plan",
+     "I renewed my annual subscription yesterday and my credit card was charged twice for the same "
+     "amount. Please refund the extra payment and confirm when it is done."),
+    ("custom-2", "Dashboard down for all users",
+     "Since 9 AM none of our team can log in to the dashboard. We get a 503 error on every page. "
+     "This is blocking our whole support team. Is there an outage?"),
+    ("custom-3", "Pricing for 50 seats",
+     "We are evaluating your platform for our company. Could you send pricing for 50 user seats and "
+     "tell us if there is a discount for annual billing?"),
+]
 
 
 def load_predictions(name: str) -> dict:
@@ -112,7 +125,11 @@ def build_examples() -> list[dict]:
                                **{f: r[f] for f in FIELDS}})
         noise.append(entry(row, "label-noise case from the error analysis: the text contradicts the gold label",
                            noisy=True))
-    return agreement + noise
+    custom = [{"id": cid, "subject": subject, "body": body, "gold": None,
+               "why": "a ticket I wrote; not in the dataset, no gold label",
+               "gold_labels": None, "noisy": False, "custom": True, "gpt4o_mini": None}
+              for cid, subject, body in CUSTOM_TICKETS]
+    return agreement + noise + custom
 
 
 def bundle_files() -> dict[str, Path]:
