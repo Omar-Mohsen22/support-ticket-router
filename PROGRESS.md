@@ -3834,3 +3834,24 @@ check with default third-party-cookie settings.
 Node.js.
 
 **Next step:** Omar's call.
+
+### step-30 follow-up: HF_SPACE_TOKEN rotated (2026-10-20)
+
+**Why.**
+- Two scratch scripts used for the live-styling diagnosis (`diag_live.py` and `cdp_live.py`,
+  never committed) set the token with Playwright's `extra_http_headers`.
+- That attaches the header to every request the page makes. A load of the live page requests
+  four hosts: the Space's `*.hf.space` host, `huggingface.co`, `fonts.googleapis.com` and
+  `fonts.gstatic.com`.
+- So the token reached Google's font servers, over HTTPS.
+
+**Done.**
+- Omar created a new `HF_SPACE_TOKEN`, put it in `.env` and in the GitHub secret, and will
+  delete the old one on Hugging Face.
+- The two scripts were deleted.
+- The committed scripts send the token only through `huggingface_hub`, `gradio_client` or
+  `deploy_space.request()`, to `huggingface.co` or the Space's own `*.hf.space` host.
+
+**Rule.** Attach HF tokens only to `*.hf.space` and `huggingface.co` requests. In a browser,
+use a per-request route that checks the host, never a page-wide header such as
+`extra_http_headers`.
