@@ -45,6 +45,9 @@ def test_root_redirects_to_docs(client):
     assert r.status_code == 307
     assert r.headers["location"] == "/docs"
     assert client.get("/").status_code == 200  # following it lands on the docs page
+    r = client.head("/", follow_redirects=False)  # what `curl -I` sends
+    assert r.status_code == 307
+    assert r.headers["location"] == "/docs"
 
 
 def test_predict_returns_valid_labels(client):

@@ -354,3 +354,36 @@ The page sends one ticket at a time, so there is no batch padding; a single-tick
   dataset or to any file derived from it.
 - See [`data/README.md`](data/README.md) for the full data card: which source file was used,
   every preprocessing step, and per-split label distributions.
+
+## How I built this
+
+I planned each step with Claude, made the decisions, and reviewed every plan and output before
+it ran or was committed. Claude Code wrote most of the code. Commits are authored by me because I
+made and reviewed every change. I disclose the AI assistance here, once for the whole project,
+instead of in each commit. [CLAUDE.md](CLAUDE.md) holds the working rules I gave the assistant.
+
+The main decisions, each recorded as a step in [PROGRESS.md](PROGRESS.md):
+
+- **Data.** I used the Tobi-Bueck/customer-support-tickets dataset, and only one of its three
+  files, filtered to English. The German-only file has a different queue taxonomy, and the third
+  file might overlap with the chosen one and leak tickets across splits (steps 01-02).
+- **One evaluation for three models.** gpt-4o-mini, TF-IDF and the fine-tuned adapter are scored
+  by the same harness on the same 1,633-ticket test split (steps 03 and 15). I capped the
+  few-shot prompting at a fixed set of variants (step 05). I decided how to report cost and
+  latency before the fine-tuned model produced any numbers, so the result could not shape the
+  framing (step 16). The harness also hashes the test split and fails loudly if a run was scored
+  on a different one (step 17).
+- **Stopping training.** The error analysis showed that the fine-tuned model and TF-IDF fail on
+  the same tickets and usually pick the same wrong label. That points at the labels, not at
+  model capacity. I decided to stop training at that point (step 19; the decision was recorded
+  in step 31).
+- **Deployment.** I tried other hosts first and chose Hugging Face PRO for the API and the demo
+  (step 28). The demo first ran the adapter in bf16 with the adapter merged. Over all 1,633 test
+  tickets it agreed with the published predictions on only 72.63%. The evaluated 4-bit config
+  agreed on 399 of 400, so I switched the demo to it, and a full run then agreed on 1,623 of
+  1,633 (step 29). The demo shows gpt-4o-mini's stored outputs instead of calling it live, so
+  that visitors' requests are not billed to my API key (steps 29-30).
+- **UI.** The demo page follows a design I approved, "Option A" (step 30).
+- **Token rotation.** A scratch diagnostic script sent my Space deploy token to Google's font
+  servers. I rotated the token, deleted the old one, and kept a rule: tokens are attached only to
+  `*.hf.space` and `huggingface.co` requests (steps 30-31).

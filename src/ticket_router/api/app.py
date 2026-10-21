@@ -73,7 +73,8 @@ app = FastAPI(title="ticket-router", lifespan=lifespan)
 
 
 # Step 31: a visitor opening the Space's root URL lands on the interactive docs, not a 404.
-@app.get("/", include_in_schema=False)
+# HEAD too, so `curl -I` and uptime checks see the redirect instead of a 405.
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 def root() -> RedirectResponse:
     return RedirectResponse("/docs")
 
