@@ -6,8 +6,8 @@ adapter (deploy/demo/preview_ui.py).
 
 The visible UI's events use api_visibility="private": they add no API endpoints. The /classify
 endpoint that the CI smoke test calls keeps its name, inputs and response shape, and is wired to
-the unchanged classify() in app.py through hidden components. /predict_batch is left as it was
-(hidden; removing it is on the go-public checklist in PROGRESS.md).
+the unchanged classify() in app.py through hidden components. It is the only API endpoint
+(step 31 removed the hidden /predict_batch).
 """
 
 from __future__ import annotations
@@ -246,9 +246,9 @@ def _button_label(e: dict) -> str:
 def build_demo(*, examples: list[dict],
                tfidf_fn: Callable[[str], tuple[dict, float]],
                adapter_fn: Callable[[str], tuple[dict | None, str, str | None, float]],
-               classify_fn: Callable, predict_batch_fn: Callable) -> gr.Blocks:
+               classify_fn: Callable) -> gr.Blocks:
     """tfidf_fn(text) -> (labels, ms). adapter_fn(text) -> (labels or None, raw, error, ms).
-    classify_fn and predict_batch_fn are app.py's unchanged API functions."""
+    classify_fn is app.py's unchanged API function."""
 
     def normalize(s) -> str:
         return (s or "").strip()
@@ -336,16 +336,12 @@ def build_demo(*, examples: list[dict],
              .success(run_fast, [subject, body, selected], fast_outputs, api_visibility="private", show_progress="hidden") \
              .success(run_slow, slow_inputs, cards, api_visibility="private", show_progress="hidden")
 
-        # Unchanged API endpoints, on hidden components: /classify (CI smoke test) and /predict_batch.
+        # The unchanged /classify API endpoint (CI smoke test), on hidden components.
         with gr.Row(visible=False):
             api_table = gr.Dataframe(headers=["field", "TF-IDF", "fine-tuned Qwen2.5-1.5B"], interactive=False)
             api_timing = gr.Markdown()
             api_run = gr.Button()
-            batch_in = gr.Textbox()
-            batch_out = gr.Textbox()
-            batch_run = gr.Button()
         api_run.click(classify_fn, inputs=[subject, body], outputs=[api_table, api_timing], api_name="classify")
-        batch_run.click(predict_batch_fn, inputs=batch_in, outputs=batch_out, api_name="predict_batch")
     return demo
 
 

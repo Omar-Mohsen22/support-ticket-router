@@ -1,6 +1,13 @@
 """Step 29 -- the evaluated adapter config (4-bit) on ZeroGPU, compared with the published
 predictions, the bf16 demo run and TF-IDF on the same tickets.
 
+HISTORICAL. Both runs depended on batch endpoints that no longer exist: /predict_batch was
+removed from the demo in step 31, before the Space went public, and /predict_batch_4bit only
+ever lived on a probe branch. Measuring again no longer works. The results are preserved in
+reports/: adapter_zerogpu_4bit_full.* (full run) and adapter_zerogpu_4bit.* (probe400), each as
+.md, .predictions.jsonl and .ledger.jsonl. `--report` still rebuilds either report from those
+saved outputs, with no Space call.
+
 Two runs, selected with --run:
 - full (default): all 1,633 test tickets through /predict_batch on the deployed MASTER demo,
   which since commit 85feb19 serves the evaluated config.

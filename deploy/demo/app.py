@@ -21,7 +21,6 @@ disk at startup, so a GPU call only loads them from disk.
 from __future__ import annotations
 
 import json
-import math
 import sys
 import time
 from pathlib import Path
@@ -51,10 +50,7 @@ from ui import build_demo, launch_kwargs
 # 4x a normal ~15-token answer) could take ~6 s. So a single ticket's worst case is ~12 s
 # (cold load plus a runaway output), and a typical one is ~2.7 s.
 SINGLE_DURATION_S = 20          # ~1.7x that worst case, ~7x the typical call
-BATCH_BASE_S = 20               # the same load-plus-runaway allowance
-BATCH_PER_8_S = 3               # per batch of 8: 2-3x the measured 0.93-1.5 s
 EVAL_BATCH = 8                  # the evaluated run's batch size
-MAX_BATCH = 96                  # hidden endpoint: up to 12 batches of 8 per call (<= 56 s)
 COMPUTE_DTYPE = torch.float16   # what pick_compute_dtype() chose on the T4
 
 CONFIG = load_config()
@@ -94,16 +90,6 @@ def adapter_generate_one(text: str) -> tuple[list[str], float, float]:
     return _generate_4bit([text])
 
 
-def batch_duration(texts: list[str]) -> float:
-    # Dynamic duration: the ZeroGPU docs say it takes the same inputs as the decorated function.
-    return BATCH_BASE_S + BATCH_PER_8_S * math.ceil(len(texts) / EVAL_BATCH)
-
-
-@spaces.GPU(duration=batch_duration)
-def adapter_generate_batch(texts: list[str]) -> tuple[list[str], float, float]:
-    return _generate_4bit(texts)
-
-
 def tfidf_predict(texts: list[str]) -> list[dict]:
     X = tfidf["vectorizer"].transform(texts)
     preds = {f: tfidf["classifiers"][f].predict(X) for f in TARGET_FIELDS}
@@ -137,21 +123,8 @@ def classify(subject: str, body: str):
     return rows, timing
 
 
-def predict_batch(payload: str) -> str:
-    """Hidden endpoint for the step-29 agreement measurement. It is not shown in the UI.
-    TODO (blocker for making this Space public): remove or disable it first, so visitors
-    cannot use it to drain GPU quota."""
-    tickets = json.loads(payload)
-    if not 1 <= len(tickets) <= MAX_BATCH:
-        raise gr.Error(f"Send between 1 and {MAX_BATCH} tickets.")
-    texts = [build_ticket_text(t.get("subject"), t["body"]) for t in tickets]
-    decoded, load_ms, gpu_ms = adapter_generate_batch(texts)
-    results = []
-    for t, raw in zip(tickets, decoded):
-        labels, error = parse_and_validate(raw)
-        results.append({"id": t["id"], "raw": raw,
-                        "labels": labels.model_dump() if labels else None, "error": error})
-    return json.dumps({"gpu_ms": gpu_ms, "load_ms": load_ms, "results": results})
+# Step 31: the hidden /predict_batch endpoint (step-29 agreement measurement) was removed before
+# the Space went public, so visitors cannot use it to drain GPU quota.
 
 
 # --- UI (step 30): layout, CSS and card rendering live in ui.py; inference above is unchanged.
@@ -169,5 +142,5 @@ def ui_adapter(text: str) -> tuple[dict | None, str, str | None, float]:
 
 
 demo = build_demo(examples=EXAMPLES, tfidf_fn=ui_tfidf, adapter_fn=ui_adapter,
-                  classify_fn=classify, predict_batch_fn=predict_batch)
+                  classify_fn=classify)
 demo.queue().launch(**launch_kwargs(EXAMPLES))

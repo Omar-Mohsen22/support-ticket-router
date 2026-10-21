@@ -3462,7 +3462,7 @@ README) is appended when the step closes.
 `predict_batch` is a hidden endpoint, added only for the step-29 agreement measurement. It sits
 in a `gr.Row(visible=False)`, so it is not in the UI, but it is still callable, and it appears on
 the Space's "Use via API" page. **It must be removed or disabled before the demo Space goes
-public**, so outside visitors cannot use it to drain GPU quota.
+public**, so outside visitors cannot use it to drain GPU quota. (Resolved: removed in step 31.)
 
 ### Dependency note: pydantic differs between the repo and the demo Space
 
@@ -3633,16 +3633,17 @@ Part of the redesign: show **gpt-4o-mini (zero-shot)** as a third column.
 
 ### Go-public checklist (all must be done before the demo Space is made public)
 
-- [ ] Remove or disable the hidden `predict_batch` endpoint in `deploy/demo/app.py`, so visitors
-  cannot use it to drain GPU quota. See the blocker TODO at the top of this entry.
+- [x] Remove or disable the hidden `predict_batch` endpoint in `deploy/demo/app.py`, so visitors
+  cannot use it to drain GPU quota. See the blocker TODO at the top of this entry. Done in step 31
+  (removed).
 - [ ] The README's "Demo" section links to the demo Space, which is private for now. Recheck the
   link, and the "(private for now)" wording, once the Space is public.
 - [ ] Step 30: the demo page links to the GitHub repo in its header (Results, Error analysis,
   Code) and in its notes (error analysis, agreement report). While the repo is private, those
   links 404 for everyone else. Make the repo public too, or change the links, before the Space
   goes public.
-- [ ] API Space (`Omar-Mohsen22/support-ticket-router`): "/" currently returns
-  `{"detail":"Not Found"}`. Make "/" redirect to `/docs`.
+- [x] API Space (`Omar-Mohsen22/support-ticket-router`): "/" currently returns
+  `{"detail":"Not Found"}`. Make "/" redirect to `/docs`. Done in step 31.
 - [ ] After making the demo public, check that it loads in a Chrome incognito window with the
   default third-party-cookie settings.
 
@@ -3855,3 +3856,51 @@ Node.js.
 **Rule.** Attach HF tokens only to `*.hf.space` and `huggingface.co` requests. In a browser,
 use a per-request route that checks the host, never a page-wide header such as
 `extra_http_headers`.
+
+## step-31: go-public, stage A (code changes while everything is still private)
+
+**Old token deleted.** On 2026-10-21 Omar deleted the rotated-out `HF_SPACE_TOKEN`
+(`ticket-router-space-deploy`) on Hugging Face. The leaked value no longer works. The scripts
+that leaked it attached only `HF_SPACE_TOKEN`; `HF_TOKEN` was never sent as a header. This was
+checked against every version of the two scripts in the session transcript.
+
+**Changes.**
+- **`/predict_batch` removed** from the demo (Omar's decision), with everything only it used:
+  - in `app.py`: `predict_batch()`, `adapter_generate_batch()`, `batch_duration()`,
+    `BATCH_BASE_S`, `BATCH_PER_8_S` and `MAX_BATCH`;
+  - the hidden batch components in `ui.py`;
+  - the stub in `preview_ui.py`.
+
+  `/classify` is now the demo's only API endpoint. It stays public (Omar's decision: the UI and
+  the CI smoke test use it).
+- **Measure scripts marked historical.** `measure_agreement.py` and `measure_4bit.py` say they
+  depended on the removed endpoints and that their results are preserved in `reports/`.
+  - `--report` still rebuilds every report from the saved outputs, with no Space call.
+  - Note: a rebuild is not byte-identical to the committed reports. The full and agreement
+    reports differ only in "Run status: report rebuilt from saved outputs". The probe400 report
+    also has older wording, with the same numbers. The committed reports were left unchanged.
+- **API Space:** `GET /` now redirects (307) to `/docs`. It is left out of the OpenAPI schema
+  and covered by a new test, `test_root_redirects_to_docs`.
+- **Smoke test message:** "counts toward the step-29 cap" became "counts toward the ZeroGPU
+  quota".
+- **Demo Space card (`deploy/demo/README.md`):**
+  - it credits the dataset (Tobi-Bueck/customer-support-tickets, CC-BY-NC-4.0) as both the
+    training data and the source of the example tickets, and says the three custom tickets are
+    Omar's;
+  - its stale facts were fixed: it now mentions the stored gpt-4o-mini output and says "1,623 of
+    1,633" instead of "399 of 400".
+
+**Files changed:** `deploy/demo/app.py`, `deploy/demo/ui.py`, `deploy/demo/preview_ui.py`,
+`deploy/demo/measure_agreement.py`, `deploy/demo/measure_4bit.py`, `deploy/demo/deploy_demo.py`,
+`deploy/demo/README.md`, `src/ticket_router/api/app.py`, `tests/test_api.py`, `PROGRESS.md`.
+
+**Verify with:**
+- `python -m pytest -q` (27 passed);
+- CI green on push;
+- `gradio_client` `view_api()` on the demo lists only `/classify`;
+- `curl -I https://omar-mohsen22-support-ticket-router.hf.space/` with the token returns `307`
+  and `location: /docs`.
+
+**Next step:** stage B, read-only: a secret scan of the full history (gitleaks plus grep), a
+review of the Actions logs, the list of files the demo Space exposes, and a sensitive-content
+review list. No visibility flips.

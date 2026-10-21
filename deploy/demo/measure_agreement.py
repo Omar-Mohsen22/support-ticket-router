@@ -1,6 +1,12 @@
 """Step 29 -- agreement between the adapter on the ZeroGPU demo (bf16 base, merged) and the
 published adapter predictions (4-bit NF4 base on a T4), on the test split.
 
+HISTORICAL. The measurement depended on the demo's hidden /predict_batch endpoint, which step 31
+removed before the Space went public (and the bf16 demo config it measured was replaced in
+step 29). Measuring again no longer works. The results are preserved in reports/:
+adapter_zerogpu_agreement.md, .predictions.jsonl and .ledger.jsonl. `--report` still rebuilds
+the report from those saved outputs, with no Space call.
+
 Budget rules (Omar's step-29 decisions):
 - Hard cap of 10 GPU-minutes for the whole step, inside the free PRO daily quota. The cap is
   checked against the CONSERVATIVE count: the client-side wall time of every call, which

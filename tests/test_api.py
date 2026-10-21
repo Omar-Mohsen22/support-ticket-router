@@ -40,6 +40,13 @@ def test_health(client):
     assert r.json() == {"status": "ok", "model": "tfidf-baseline", "model_loaded": True}
 
 
+def test_root_redirects_to_docs(client):
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"] == "/docs"
+    assert client.get("/").status_code == 200  # following it lands on the docs page
+
+
 def test_predict_returns_valid_labels(client):
     r = client.post("/predict", json={"subject": "Refund request", "body": "I was charged twice."})
     assert r.status_code == 200

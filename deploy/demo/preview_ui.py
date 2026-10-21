@@ -59,15 +59,11 @@ def classify_stub(subject: str, body: str):
     return [[f, "-", STUB_LABELS[f]] for f in TARGET_FIELDS], "stub"
 
 
-def predict_batch_stub(payload: str) -> str:
-    return "{}"
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ssr", action="store_true", help="server-side rendering, as on the Space")
     args = parser.parse_args()
     demo = build_demo(examples=examples, tfidf_fn=tfidf_fn, adapter_fn=adapter_stub,
-                      classify_fn=classify_stub, predict_batch_fn=predict_batch_stub)
+                      classify_fn=classify_stub)
     demo.queue().launch(server_name="127.0.0.1", server_port=7861, ssr_mode=args.ssr,
                         **launch_kwargs(examples))

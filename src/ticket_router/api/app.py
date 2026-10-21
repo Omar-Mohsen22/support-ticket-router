@@ -19,6 +19,7 @@ from pathlib import Path
 
 import joblib
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, field_validator
 
 # Make `ticket_router` importable when uvicorn is started without --app-dir src.
@@ -69,6 +70,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ticket-router", lifespan=lifespan)
+
+
+# Step 31: a visitor opening the Space's root URL lands on the interactive docs, not a 404.
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse("/docs")
 
 
 @app.get("/health", response_model=HealthResponse)

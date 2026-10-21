@@ -15,7 +15,7 @@ then smoke-test it.
 3. Wait for a build stage, then RUNNING (reuses deploy/space/deploy_space.py).
 4. Smoke-test with gradio_client and the token: the "classify" endpoint on one example ticket
    must return valid labels for both models. It logs latency and the GPU time the call used.
-   Every GPU call counts toward step-29's 10-GPU-minute cap.
+   Every GPU call counts toward the account's ZeroGPU quota.
 
 The token comes from the HF_SPACE_TOKEN environment variable (or .env locally) and is never
 printed. The Space's own HF_TOKEN secret (read access to the private adapter) is set
@@ -182,7 +182,7 @@ def smoke_test(token: str, example: dict) -> list[str]:
         f"| classify `{example['id']}` | {'OK' if not problems else 'INVALID'} | {call_ms:.0f} | "
         f"{', '.join(f'{r[0]}: {r[1]} / {r[2]}' for r in rows)} |",
         f"| server timing | - | - | {timing.splitlines()[0]} |",
-        f"| GPU time used by this smoke test | - | {gpu_ms} | counts toward the step-29 cap |",
+        f"| GPU time used by this smoke test | - | {gpu_ms} | counts toward the ZeroGPU quota |",
     ]
     if problems:
         print("\n".join(lines))
