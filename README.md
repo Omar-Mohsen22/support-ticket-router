@@ -182,7 +182,7 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate    POSIX: source .venv/bin/activate
 pip install -r requirements.txt
 # copy .env.example to .env and fill it in:
-# OPENAI_API_KEY for the API predictor, HF_TOKEN for the adapter predictor
+# OPENAI_API_KEY for the API predictor; HF_TOKEN is optional
 ```
 
 1. Data. `test.parquet` and `val.parquet` are committed. `make_dataset.py` regenerates them
@@ -210,8 +210,8 @@ pip install -r requirements.txt
    python src/ticket_router/make_sft_dataset.py
    ```
 5. Score the adapter. This needs a CUDA GPU. The adapter is public on Hugging Face
-   ([`Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`](https://huggingface.co/Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora)), but the script still expects a
-   Hugging Face read token in `HF_TOKEN` and stops without one.
+   ([`Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`](https://huggingface.co/Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora)), so `HF_TOKEN` is optional: the
+   script uses it if set, and downloads without it otherwise.
    ```
    python src/ticket_router/predictors/adapter_predictor.py --split test --run-name qlora-adapter-ckpt1500
    python src/ticket_router/evaluate.py --predictions results/qlora-adapter-ckpt1500.predictions.jsonl --split test --run-name qlora-adapter-ckpt1500

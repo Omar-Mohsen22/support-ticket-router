@@ -3646,7 +3646,8 @@ Part of the redesign: show **gpt-4o-mini (zero-shot)** as a third column.
 - [x] API Space (`Omar-Mohsen22/support-ticket-router`): "/" currently returns
   `{"detail":"Not Found"}`. Make "/" redirect to `/docs`. Done in step 31.
 - [x] After making the demo public, check that it loads in a Chrome incognito window with the
-  default third-party-cookie settings. Done by Omar on 2026-10-21 (step 31).
+  default third-party-cookie settings. Done by Omar in step 31: the page load on 2026-10-21,
+  an anonymous classify on 2026-10-22.
 
 ### Step-29 closing summary
 
@@ -3991,8 +3992,9 @@ the adapter repo, the API Space, then the demo Space.
    - one anonymous `/classify` on `tkt_014741` returned Customer Service / medium / Request,
      equal to the gold label and to the published prediction, with 3,467 ms of GPU inside the
      call.
-   - **Omar's incognito test (2026-10-21):** in Chrome incognito with default cookie settings,
-     the page loads. "Pricing for 50 seats" classified as an anonymous visitor in 9.1 s:
+   - **Omar's incognito test, over two days:** in Chrome incognito with default cookie
+     settings, the page loaded on 2026-10-21. On 2026-10-22, "Pricing for 50 seats" classified
+     as an anonymous visitor in 9.1 s:
      TF-IDF Billing and Payments / high / Problem; fine-tuned Sales and Pre-Sales / medium /
      Request.
 
@@ -4035,3 +4037,40 @@ the adapter repo, the API Space, then the demo Space.
 
 **Next step:** Omar edits the model card on HF, then it is checked without a token against
 `model_card/README.md`.
+
+### step-31: model card check on HF, optional HF_TOKEN for the adapter predictor
+
+- **Model card on HF.**
+  - Omar edited the two spots in the HF web editor; the model repo commit is `b0fdc2e`.
+  - Downloaded with no token, the card matches `model_card/README.md` byte for byte once
+    CRLF/LF are normalized (7,113 bytes each).
+- **CI run `39796772530`** (commit `f34c496`):
+  - its `docker` job showed `in_progress` with no conclusion for a while, although all its
+    steps had passed and the jobs that need it had run;
+  - rechecked later, all 4 jobs are `completed success`.
+- **`HF_TOKEN` is optional in `adapter_predictor.py`.**
+  - `load_hf_token()` returns the token if `HF_TOKEN` is set (in the environment or `.env`),
+    and None otherwise. An empty value counts as not set.
+  - With None, huggingface_hub uses a saved `hf auth login` token if there is one, and
+    downloads anonymously otherwise.
+  - The demo Space is unchanged: it still has its own `HF_TOKEN` secret.
+  - README Reproduce step 5, the setup comment and `.env.example` now say the token is
+    optional.
+- **No test was added.**
+  - `adapter_predictor.py` imports torch at module level, and neither the dev venv nor the
+    Docker image has torch, so a test would be skipped everywhere.
+  - Instead, the function was checked on its own (extracted with `ast`, run without torch):
+    unset returns None, a set value is returned, and an empty value returns None.
+- **The incognito test record** was corrected to cover two days: the page load on 2026-10-21,
+  the anonymous classify on 2026-10-22.
+
+**Files changed:** `src/ticket_router/predictors/adapter_predictor.py`, `README.md`,
+`.env.example`, `PROGRESS.md`.
+
+**Verify with:**
+- `python -m pytest -q`;
+- CI green on all 4 jobs;
+- on a CUDA machine, with `HF_TOKEN` unset:
+  `python src/ticket_router/predictors/adapter_predictor.py --split test --limit 8 --run-name smoke --output .scratch/smoke.jsonl`
+
+**Next step:** step 31 is complete. Step 32 is not planned yet.

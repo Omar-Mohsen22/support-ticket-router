@@ -134,14 +134,14 @@ def load_label_map() -> dict:
     return json.loads(LABEL_MAP_PATH.read_text(encoding="utf-8"))
 
 
-def load_hf_token() -> str:
+def load_hf_token() -> str | None:
+    """HF_TOKEN from the environment or .env, or None. The adapter repo (train/config.yaml's
+    hub_model_id) is public since step 31, so a token is optional: with None, huggingface_hub
+    uses a saved `hf auth login` token if there is one, and downloads anonymously otherwise."""
     load_dotenv(dotenv_path=ENV_PATH, override=True)
-    token = os.environ.get("HF_TOKEN")
-    if not token:
-        print("STOP: HF_TOKEN not set.")
-        print(f"Add it to {ENV_PATH} (copy .env.example). Any Hugging Face read token works: the "
-              "adapter repo (train/config.yaml's hub_model_id) is public since step 31.")
-        raise SystemExit(1)
+    token = os.environ.get("HF_TOKEN") or None
+    if token is None:
+        print("HF_TOKEN not set: downloading the base model and adapter without it.")
     return token
 
 
@@ -163,7 +163,7 @@ def pick_compute_dtype() -> torch.dtype:
     return dtype
 
 
-def load_model_and_tokenizer(config: dict, compute_dtype: torch.dtype, hf_token: str):
+def load_model_and_tokenizer(config: dict, compute_dtype: torch.dtype, hf_token: str | None):
     base_model_id = config["base_model"]
     adapter_repo_id = config["hub_model_id"]
 
