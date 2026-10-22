@@ -3636,16 +3636,17 @@ Part of the redesign: show **gpt-4o-mini (zero-shot)** as a third column.
 - [x] Remove or disable the hidden `predict_batch` endpoint in `deploy/demo/app.py`, so visitors
   cannot use it to drain GPU quota. See the blocker TODO at the top of this entry. Done in step 31
   (removed).
-- [ ] The README's "Demo" section links to the demo Space, which is private for now. Recheck the
-  link, and the "(private for now)" wording, once the Space is public.
-- [ ] Step 30: the demo page links to the GitHub repo in its header (Results, Error analysis,
+- [x] The README's "Demo" section links to the demo Space, which is private for now. Recheck the
+  link, and the "(private for now)" wording, once the Space is public. Done in step 31 (stage D).
+- [x] Step 30: the demo page links to the GitHub repo in its header (Results, Error analysis,
   Code) and in its notes (error analysis, agreement report). While the repo is private, those
   links 404 for everyone else. Make the repo public too, or change the links, before the Space
-  goes public.
+  goes public. Done in step 31: the repo was made public first, and the links were checked
+  without auth.
 - [x] API Space (`Omar-Mohsen22/support-ticket-router`): "/" currently returns
   `{"detail":"Not Found"}`. Make "/" redirect to `/docs`. Done in step 31.
-- [ ] After making the demo public, check that it loads in a Chrome incognito window with the
-  default third-party-cookie settings.
+- [x] After making the demo public, check that it loads in a Chrome incognito window with the
+  default third-party-cookie settings. Done by Omar on 2026-10-21 (step 31).
 
 ### Step-29 closing summary
 
@@ -3958,3 +3959,79 @@ main decisions with their step numbers.
 
 **Next step:** Omar's call. Stage C, the visibility flips in the planned order: the GitHub repo,
 the adapter repo, the API Space, then the demo Space.
+
+### step-31: stage C (the four visibility flips) and stage D (public wording)
+
+**Stage C: the flips, in the planned order.** Each was verified with no token: `token=False`,
+`HF_TOKEN`/`HF_SPACE_TOKEN` unset, an empty `HF_HOME`, and plain HTTP with no auth header.
+1. **GitHub repo** (`gh repo edit ... --visibility public`).
+   - Before the flip: the tree was clean, local == origin == `593c018`, and the last CI run on
+     master was green.
+   - After: `gh repo view` returns PUBLIC.
+   - Without auth, these return 200: the repo page, the raw README, `reports/error_analysis.md`
+     and `reports/adapter_zerogpu_4bit_full.md`. The `#headline-results` anchor exists.
+   - Actions settings:
+     - the workflows use `pull_request`, not `pull_request_target`, so fork PRs get no secrets
+       (GitHub does not pass secrets to fork PRs on public repos);
+     - the deploy jobs run only on a push to master;
+     - the default token permissions are read;
+     - fork PR approval: `first_time_contributors`.
+2. **Adapter model repo** `Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`. Omar flipped it in
+   the HF UI. Without a token: `model_info` returns private=False, `adapter_config.json`
+   downloads, and the model page returns 200.
+3. **API Space**, flipped with `update_repo_settings(private=False)` using `HF_SPACE_TOKEN`.
+   Without a token:
+   - private=False and RUNNING (cpu-basic); the Space page returns 200;
+   - `GET /` and `HEAD /` return 307 to `/docs`, and `/docs` returns 200;
+   - `/health` is ok;
+   - `POST /predict` returned valid labels (Billing and Payments / high / Problem).
+4. **Demo Space**, flipped the same way. Without a token:
+   - private=False and RUNNING (zero-a10g); the Space page returns 200;
+   - `view_api` lists only `/classify`;
+   - one anonymous `/classify` on `tkt_014741` returned Customer Service / medium / Request,
+     equal to the gold label and to the published prediction, with 3,467 ms of GPU inside the
+     call.
+   - **Omar's incognito test (2026-10-21):** in Chrome incognito with default cookie settings,
+     the page loads. "Pricing for 50 seats" classified as an anonymous visitor in 9.1 s:
+     TF-IDF Billing and Payments / high / Problem; fine-tuned Sales and Pre-Sales / medium /
+     Request.
+
+**Stage D: public wording.**
+- **"Private for now" statements were replaced** in:
+  - `README.md`: Serving, Demo, Reproduce step 5, and Limitations. The private-weights and
+    private-serving bullets became "The adapter is not served as an API";
+  - `deploy/demo/README.md` and `deploy/space/README.md` (the Space cards);
+  - `model_card/README.md`: the GitHub-is-private sentence was removed, and "log in first / pass
+    `token=`" became "This repo is public, so no Hugging Face token is needed".
+- **Model repo links** were added to the README (Demo and Reproduce), the demo Space card, and
+  the demo's "About this demo".
+- **The deploy guards were flipped.** `deploy_demo.py` and `deploy_space.py` used to STOP if
+  their Space was public, which would have failed both deploy jobs on the next push. They now
+  STOP if the Space is private.
+- **`HF_TOKEN` wording.**
+  - `adapter_predictor.py` (and so the demo) still requires `HF_TOKEN` and STOPs without it.
+    Behavior is unchanged.
+  - Its message and `.env.example` no longer say the repo is private; they say any read token
+    works.
+- **Remaining "private" hits, with the reason each stays:**
+  - the deploy guards themselves;
+  - Gradio's `api_visibility="private"` argument;
+  - `hub_private` in `train/config.yaml` and the notebook, a training-time push setting;
+  - the base-model note in `train/config.yaml` ("private": false);
+  - a dataset tag named "Private" in `reports/data_report.md`;
+  - historical entries in this file.
+- **The model card on HF is edited by Omar** in the HF web editor. No project token has write
+  access to the model repo. It is then checked without a token against `model_card/README.md`.
+
+**Files changed:** `README.md`, `deploy/demo/README.md`, `deploy/space/README.md`,
+`model_card/README.md`, `deploy/demo/ui.py`, `deploy/demo/app.py`, `deploy/demo/deploy_demo.py`,
+`deploy/space/deploy_space.py`, `src/ticket_router/predictors/adapter_predictor.py`,
+`.env.example`, `PROGRESS.md`.
+
+**Verify with:**
+- `python -m pytest -q`;
+- CI green, with both deploy jobs passing against the public Spaces;
+- `git grep -n -i "private for now"` returns nothing.
+
+**Next step:** Omar edits the model card on HF, then it is checked without a token against
+`model_card/README.md`.

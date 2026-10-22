@@ -209,7 +209,9 @@ pip install -r requirements.txt
    ```
    python src/ticket_router/make_sft_dataset.py
    ```
-5. Score the adapter. This needs a CUDA GPU and `HF_TOKEN`.
+5. Score the adapter. This needs a CUDA GPU. The adapter is public on Hugging Face
+   ([`Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`](https://huggingface.co/Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora)), but the script still expects a
+   Hugging Face read token in `HF_TOKEN` and stops without one.
    ```
    python src/ticket_router/predictors/adapter_predictor.py --split test --run-name qlora-adapter-ckpt1500
    python src/ticket_router/evaluate.py --predictions results/qlora-adapter-ckpt1500.predictions.jsonl --split test --run-name qlora-adapter-ckpt1500
@@ -265,10 +267,10 @@ CI (`.github/workflows/ci.yml`) runs two jobs:
 - **`refit-sensitivity`** refits TF-IDF on Linux and scores it with the same metric code. The
   result goes to the job summary only; nothing published is changed.
 
-**Hosted deployment (private for now).** The API runs on a private Hugging Face Docker Space,
+**Hosted deployment.** The API runs on a public Hugging Face Docker Space,
 [`Omar-Mohsen22/support-ticket-router`](https://huggingface.co/spaces/Omar-Mohsen22/support-ticket-router),
-on free `cpu-basic` hardware (`https://omar-mohsen22-support-ticket-router.hf.space`). Requests
-need an `Authorization: Bearer <HF token>` header with read access to the Space. On every push
+on free `cpu-basic` hardware (`https://omar-mohsen22-support-ticket-router.hf.space`). No token
+is needed, and `/` redirects to the interactive docs at `/docs`. On every push
 to `master` whose `docker` job passes, the `deploy` CI job does the following
 (`deploy/space/deploy_space.py`):
 1. uploads exactly the files the Docker build needs;
@@ -292,10 +294,10 @@ reproduces `results/tfidf-baseline.predictions.jsonl` exactly, on all 1,633 test
 ## Demo
 
 I run a side-by-side demo on a Hugging Face ZeroGPU Space,
-[`Omar-Mohsen22/support-ticket-router-demo`](https://huggingface.co/spaces/Omar-Mohsen22/support-ticket-router-demo)
-(private for now).
+[`Omar-Mohsen22/support-ticket-router-demo`](https://huggingface.co/spaces/Omar-Mohsen22/support-ticket-router-demo).
+It is public; no account is needed.
 - **TF-IDF** runs on the CPU.
-- **My QLoRA adapter** runs on a shared GPU, with the same inference config as the evaluated
+- **My QLoRA adapter** ([`Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`](https://huggingface.co/Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora)) runs on a shared GPU, with the same inference config as the evaluated
   run: 4-bit NF4 base, adapter not merged, float16 compute, greedy decoding. It is loaded through
   the same `load_model_and_tokenizer()` as `src/ticket_router/predictors/adapter_predictor.py`.
 
@@ -333,10 +335,8 @@ The page sends one ticket at a time, so there is no batch padding; a single-tick
   macro-F1 moved by at most 0.0027 on any field. The adapter-vs-TF-IDF ordering was
   unchanged on every field. Two runs are not enough to call this an error margin. The served
   artifact is the exact evaluated model; CI verifies it on all 1633 test rows.
-- **Adapter weights are private for now.** They are hosted in a private Hugging Face repo,
-  `Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora`, so step 5 of Reproduce needs access to it.
-- **Serving is private for now.** CI deploys the TF-IDF API to a private Hugging Face Space (see
-  Serving). The adapter is served only in the private ZeroGPU demo (see Demo), not as an API.
+- **The adapter is not served as an API.** It runs only in the ZeroGPU demo (see Demo), which
+  loads the model on every request on shared hardware. The API (see Serving) serves TF-IDF only.
 
 ## Data and licensing
 

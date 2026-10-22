@@ -26,6 +26,7 @@ REPO_URL = "https://github.com/Omar-Mohsen22/support-ticket-router"
 RESULTS_URL = f"{REPO_URL}#headline-results"
 ERROR_ANALYSIS_URL = f"{REPO_URL}/blob/master/reports/error_analysis.md"
 AGREEMENT_REPORT_URL = f"{REPO_URL}/blob/master/reports/adapter_zerogpu_4bit_full.md"
+MODEL_URL = "https://huggingface.co/Omar-Mohsen22/ticket-router-qwen2.5-1.5b-qlora"
 
 HEAD = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
@@ -233,7 +234,7 @@ def notes_html() -> str:
 <p>The test labels are noisy. Tickets marked "noisy label" have text that contradicts their gold label; compare them yourself (<a href="{ERROR_ANALYSIS_URL}" target="_blank">error analysis</a>).</p>
 <details><summary>About this demo</summary>
 <p>gpt-4o-mini shows the stored output from my evaluation run, for the examples only. I don't call it live: a public page would need my API key on the server, and every visitor's request would be billed to my account.</p>
-<p>The fine-tuned card runs the evaluated inference config: 4-bit NF4 base, adapter not merged, float16 compute, greedy decoding. Through this Space, in batches of 8, it matched the published predictions on 1,623 of 1,633 test tickets (<a href="{AGREEMENT_REPORT_URL}" target="_blank">report</a>). This page sends one ticket at a time, so there is no batch padding, and an answer can occasionally differ from the batched results. The model loads on every request, so an answer takes a few seconds.</p>
+<p>The fine-tuned card runs the evaluated inference config: 4-bit NF4 base, adapter not merged, float16 compute, greedy decoding. Through this Space, in batches of 8, it matched the published predictions on 1,623 of 1,633 test tickets (<a href="{AGREEMENT_REPORT_URL}" target="_blank">report</a>). This page sends one ticket at a time, so there is no batch padding, and an answer can occasionally differ from the batched results. The model loads on every request, so an answer takes a few seconds. The adapter is on Hugging Face: <a href="{MODEL_URL}" target="_blank">ticket-router-qwen2.5-1.5b-qlora</a>.</p>
 </details>
 </div>"""
 

@@ -139,8 +139,8 @@ def load_hf_token() -> str:
     token = os.environ.get("HF_TOKEN")
     if not token:
         print("STOP: HF_TOKEN not set.")
-        print(f"Add it to {ENV_PATH} (copy .env.example) -- needed because the adapter repo "
-              "(train/config.yaml's hub_model_id) is private.")
+        print(f"Add it to {ENV_PATH} (copy .env.example). Any Hugging Face read token works: the "
+              "adapter repo (train/config.yaml's hub_model_id) is public since step 31.")
         raise SystemExit(1)
     return token
 

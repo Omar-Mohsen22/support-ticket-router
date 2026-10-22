@@ -46,8 +46,7 @@ For comparison, on the same split: TF-IDF + logistic regression scores 0.3683 /
 `gpt-4o-mini` scores 0.2554 / 0.3214 / 0.5209. So this adapter beats
 zero-shot `gpt-4o-mini` on every field, and beats TF-IDF on queue and type but not on priority.
 
-The full comparison table is in the [GitHub README](https://github.com/Omar-Mohsen22/support-ticket-router#headline-results). The GitHub repo is
-private for now.
+The full comparison table is in the [GitHub README](https://github.com/Omar-Mohsen22/support-ticket-router#headline-results).
 
 ## Training
 
@@ -75,8 +74,7 @@ private for now.
 
 This follows `src/ticket_router/predictors/adapter_predictor.py` in the GitHub repo. It uses the
 same system prompt, the base model's chat template, left padding and greedy decoding. It needs a
-CUDA GPU with `bitsandbytes`. This repo is private, so log in first (`hf auth login`) or pass
-`token=...` to `from_pretrained`.
+CUDA GPU with `bitsandbytes`. This repo is public, so no Hugging Face token is needed.
 
 The user message is the ticket text: the subject, a newline, then the body. If there is no
 subject, it is the body alone.

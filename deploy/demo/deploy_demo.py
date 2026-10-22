@@ -18,7 +18,7 @@ then smoke-test it.
    Every GPU call counts toward the account's ZeroGPU quota.
 
 The token comes from the HF_SPACE_TOKEN environment variable (or .env locally) and is never
-printed. The Space's own HF_TOKEN secret (read access to the private adapter) is set
+printed. The Space's own HF_TOKEN secret (read access to the adapter repo) is set
 separately, once, with --set-secret.
 
 Run from the repo root:
@@ -154,7 +154,7 @@ def set_secret() -> None:
         raise SystemExit("STOP: HF_TOKEN (read access to the adapter repo) is not set.")
     HfApi(token=get_token()).add_space_secret(
         SPACE_ID, "HF_TOKEN", adapter_token,
-        description="Read-only token for the private adapter repo",
+        description="Read-only token for the adapter repo",
     )
     print(f"Set Space secret HF_TOKEN on {SPACE_ID} (value not printed).")
 
@@ -217,8 +217,8 @@ def main() -> None:
     api = HfApi(token=token)
     info = api.space_info(SPACE_ID)
     runtime = api.get_space_runtime(SPACE_ID)
-    if not info.private:
-        raise SystemExit("STOP: the demo Space is public; this deploy expects it private.")
+    if info.private:
+        raise SystemExit("STOP: the demo Space is private; since step 31 this deploy expects it public.")
     if runtime.requested_hardware != "zero-a10g":
         raise SystemExit(f"STOP: requested hardware is {runtime.requested_hardware}, not ZeroGPU.")
     previous_sha = info.sha

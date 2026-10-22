@@ -1,4 +1,4 @@
-"""Step 28 -- deploy the TF-IDF API to the private Hugging Face Docker Space
+"""Step 28 -- deploy the TF-IDF API to the Hugging Face Docker Space
 Omar-Mohsen22/support-ticket-router, then smoke-test it.
 
 1. Assemble exactly the files the Dockerfile build needs. The list comes from the
@@ -203,8 +203,8 @@ def main() -> None:
     token = get_token()
     api = HfApi(token=token)
     info = api.space_info(SPACE_ID)
-    if not info.private:
-        raise SystemExit("STOP: the Space is public; this deploy expects it private.")
+    if info.private:
+        raise SystemExit("STOP: the Space is private; since step 31 this deploy expects it public.")
     runtime = api.get_space_runtime(SPACE_ID)
     if runtime.requested_hardware != "cpu-basic":
         raise SystemExit(f"STOP: requested hardware is {runtime.requested_hardware}, not cpu-basic.")

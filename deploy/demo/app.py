@@ -61,7 +61,7 @@ HF_TOKEN = load_hf_token()
 
 tfidf = joblib.load(MODEL_PATH)
 
-# Download the base model and the private adapter to the disk cache now, without a GPU, so a GPU
+# Download the base model and the adapter to the disk cache now, without a GPU, so a GPU
 # call never spends its time on a 3 GB download.
 snapshot_download(CONFIG["base_model"])
 snapshot_download(CONFIG["hub_model_id"], token=HF_TOKEN)
