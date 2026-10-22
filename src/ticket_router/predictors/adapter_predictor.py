@@ -81,7 +81,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -92,11 +91,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import pandas as pd
 import torch
 import yaml
-from dotenv import load_dotenv
 from peft import PeftModel
 from pydantic import ValidationError
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
+from ticket_router.hf_auth import load_hf_token  # step 31: moved out so tests can cover it without torch
 from ticket_router.make_sft_dataset import build_system_message
 from ticket_router.run_meta import write_run_meta
 from ticket_router.schema import TicketLabels
@@ -106,7 +105,6 @@ PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 RESULTS_DIR = REPO_ROOT / "results"
 LABEL_MAP_PATH = PROCESSED_DIR / "label_map.json"
 CONFIG_PATH = REPO_ROOT / "train" / "config.yaml"
-ENV_PATH = REPO_ROOT / ".env"
 CACHE_DIR = REPO_ROOT / ".cache" / "adapter_predictor"
 
 TARGET_FIELDS = ["queue", "priority", "type"]
@@ -132,17 +130,6 @@ def load_label_map() -> dict:
     if not LABEL_MAP_PATH.exists():
         raise FileNotFoundError(f"{LABEL_MAP_PATH} not found. Run make_dataset.py first.")
     return json.loads(LABEL_MAP_PATH.read_text(encoding="utf-8"))
-
-
-def load_hf_token() -> str | None:
-    """HF_TOKEN from the environment or .env, or None. The adapter repo (train/config.yaml's
-    hub_model_id) is public since step 31, so a token is optional: with None, huggingface_hub
-    uses a saved `hf auth login` token if there is one, and downloads anonymously otherwise."""
-    load_dotenv(dotenv_path=ENV_PATH, override=True)
-    token = os.environ.get("HF_TOKEN") or None
-    if token is None:
-        print("HF_TOKEN not set: downloading the base model and adapter without it.")
-    return token
 
 
 def pick_compute_dtype() -> torch.dtype:

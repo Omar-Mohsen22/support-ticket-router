@@ -48,6 +48,7 @@ DEMO_DIR = REPO_ROOT / "deploy" / "demo"
 DEMO_FILES = {"app.py": "app.py", "ui.py": "ui.py", "requirements.txt": "requirements.txt", "README.md": "README.md"}
 SRC_MODULES = [
     "src/ticket_router/__init__.py",
+    "src/ticket_router/hf_auth.py",
     "src/ticket_router/ticket_text.py",
     "src/ticket_router/schema.py",
     "src/ticket_router/metrics.py",

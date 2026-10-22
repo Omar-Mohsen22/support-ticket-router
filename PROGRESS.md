@@ -4074,3 +4074,32 @@ the adapter repo, the API Space, then the demo Space.
   `python src/ticket_router/predictors/adapter_predictor.py --split test --limit 8 --run-name smoke --output .scratch/smoke.jsonl`
 
 **Next step:** step 31 is complete. Step 32 is not planned yet.
+
+### step-31: load_hf_token moved to a torch-free module, with tests
+
+- **`src/ticket_router/hf_auth.py` (new):** `load_hf_token(env_path=ENV_PATH)`, with the same
+  behavior as before. It imports neither torch nor transformers.
+  - `python-dotenv` is imported inside the function and is optional. The Docker image
+    (`requirements-serve.txt`) does not install it, so there the token comes from the
+    environment only. This is the same pattern as `deploy_demo.py`'s `set_secret()`.
+  - No dependency was added.
+- **`adapter_predictor.py`** imports `load_hf_token` from `hf_auth`, and drops its own `os`,
+  `load_dotenv` and `ENV_PATH`, which only that function used. `deploy/demo/app.py` is
+  unchanged: it still imports `load_hf_token` from `adapter_predictor`.
+- **The demo bundle:** `src/ticket_router/hf_auth.py` was added to `SRC_MODULES` in
+  `deploy/demo/deploy_demo.py`. `--dry-run` lists 19 files.
+- **`tests/test_hf_auth.py` (new),** three cases: unset gives None, set gives the value, empty
+  gives None. Each points `env_path` at a missing file, so a real `.env` cannot interfere.
+  The suite now has 30 tests.
+
+**Files changed:** `src/ticket_router/hf_auth.py` (new), `tests/test_hf_auth.py` (new),
+`src/ticket_router/predictors/adapter_predictor.py`, `deploy/demo/deploy_demo.py`,
+`PROGRESS.md`.
+
+**Verify with:**
+- `python -m pytest -q tests/test_hf_auth.py`;
+- `python deploy/demo/deploy_demo.py --dry-run` lists `src/ticket_router/hf_auth.py`;
+- CI green on all 4 jobs: the `docker` job runs the new tests without python-dotenv, and
+  `deploy-demo` boots the Space with the new module.
+
+**Next step:** step 31 is complete. Step 32 is not planned yet.
