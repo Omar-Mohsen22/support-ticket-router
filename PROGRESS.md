@@ -4103,3 +4103,60 @@ the adapter repo, the API Space, then the demo Space.
   `deploy-demo` boots the Space with the new module.
 
 **Next step:** step 31 is complete. Step 32 is not planned yet.
+
+## step-32: README figures (macro-F1 per field, demo agreement, demo screenshot)
+
+**Built:**
+- **`src/ticket_router/make_figures.py`** builds two figures from committed files only, each
+  in a light and a dark version, as PNG at 2x (200 dpi):
+  - `docs/images/f1_by_field_{light,dark}.png`: macro-F1 per field, from
+    `results/results.json`. There are three small panels (queue, priority, type) with a shared
+    0-1 y-axis and three bars each. Omar picked this over a grouped bar chart, and the grouped
+    option was removed from the script.
+  - `docs/images/demo_agreement_{light,dark}.png`: the demo's agreement with the published
+    adapter predictions on all three fields. It is parsed from
+    `reports/adapter_zerogpu_4bit_full.md`, because those numbers are not in results.json; the
+    script STOPs if the table row is missing. The first setup (bf16, merged, batch 16) is
+    drawn on top: 1,186 / 1,633 (72.6%). The evaluated config (4-bit, unmerged, batch 8) is
+    below: 1,623 / 1,633 (99.4%). The x-axis stops at 100%, and the value labels sit in the
+    right margin.
+- **Colors per model:**
+  - TF-IDF `#0891B2` and gpt-4o-mini `#C2850C`, in both modes.
+  - Fine-tuned `#6D28D9` (the demo's purple) on light. On dark it is `#8B5CF6`, because
+    `#6D28D9` has 2.66:1 contrast on `#0d1117`.
+  - Both palettes passed the dataviz palette validator on GitHub's backgrounds (`#ffffff`,
+    `#0d1117`): lightness, chroma, colorblind separation (worst deltaE 16.7 on light, 12.6 on
+    dark), normal-vision separation, and contrast.
+  - Every bar carries its value as text, and all text is in neutral ink.
+- **`docs/images/demo_screenshot.png`**: one desktop screenshot of the public demo (1440 px
+  wide at 2x, no token). It took one classify call, on example `tkt_014741`: fine-tuned and
+  TF-IDF both Customer Service / medium / Request, with an 8.2 s client wall time.
+  - The Hugging Face overlay badge (Space name and like button) was filled with the page's
+    white background. The box was measured as the only non-white pixels in the top-right.
+  - The image was cropped to the header, the three result cards and the first three example
+    tickets.
+  - The capture and crop are scratch scripts (`.scratch/step32/`). The screenshot is a live
+    capture, so it is not rebuilt by `make_figures.py`.
+- **Not drawn: latency and cost.**
+  - `results.json` has a measured cost only for TF-IDF. For gpt-4o-mini and the adapter, a
+    0 cost means unmeasured.
+  - The three latencies come from different hardware and methods (README, Notes).
+- **README:**
+  - the F1 figure is under "Headline results";
+  - the screenshot is at the top of "Demo";
+  - the agreement figure is above the demo's "Full numbers" link;
+  - the two figures use `<picture>` with a dark source, and every image has alt text with its
+    numbers.
+- **Dependency:** `matplotlib==3.10.7` was added to `requirements-dev.txt` only. It is needed
+  to build the figures, not to train, evaluate or serve, so it stays out of the Docker image
+  and the Spaces.
+
+**Files added/changed:** `src/ticket_router/make_figures.py` (new), `docs/images/` (5 PNGs,
+new), `README.md`, `requirements-dev.txt`, `PROGRESS.md`.
+
+**Verify with:**
+- `python src/ticket_router/make_figures.py --out .scratch/regen`, then compare with
+  `docs/images/`. All four figures came out byte-identical in this step.
+- `python -m pytest -q`: 30 passed.
+
+**Next step:** step 33, not planned yet.

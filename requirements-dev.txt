@@ -1,3 +1,4 @@
 # Step-29: deploy/CI-only tools, never installed into the serving image or the Spaces.
 huggingface_hub==1.31.0  # step-28: upload_folder / Space runtime polling in deploy/*/deploy_*.py (same pin the step-28 deploy job installs)
 gradio_client==2.7.1  # step-29: smoke test and agreement measurement against the ZeroGPU demo Space; the exact version gradio 6.28.0 (the demo's sdk_version) pins
+matplotlib==3.10.7  # step-32: README figures in src/ticket_router/make_figures.py (built from results/results.json and reports/); not needed to train, evaluate or serve
